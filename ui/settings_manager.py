@@ -48,6 +48,10 @@ class SettingsManager:
             'last_used': {
                 'export_format': 'txt',
                 'last_export_time': None
+            },
+            'update': {
+                'auto_check_update': True,
+                'ignore_version': ''
             }
         }
         
@@ -116,6 +120,18 @@ class SettingsManager:
         # 合并排序设置
         if 'sort' in loaded_settings:
             self.settings['sort'].update(loaded_settings['sort'])
+        
+        # 合并更新设置
+        if 'update' in loaded_settings:
+            self.settings['update'].update(loaded_settings['update'])
+        
+        # 合并UI设置
+        if 'ui' in loaded_settings:
+            self.settings['ui'].update(loaded_settings['ui'])
+        
+        # 合并最后使用设置
+        if 'last_used' in loaded_settings:
+            self.settings['last_used'].update(loaded_settings['last_used'])
     
     def apply_settings(self):
         """应用设置到应用程序"""
@@ -239,6 +255,33 @@ class SettingsManager:
             self.settings['sort']['is_time_sort']
         )
     
+    def get_setting(self, category, key, default=None):
+        """获取设置值
+        
+        Args:
+            category: 设置分类
+            key: 设置键名
+            default: 默认值
+        
+        Returns:
+            设置值或默认值
+        """
+        if category in self.settings and key in self.settings[category]:
+            return self.settings[category][key]
+        return default
+    
+    def set_setting(self, category, key, value):
+        """设置设置值
+        
+        Args:
+            category: 设置分类
+            key: 设置键名
+            value: 设置值
+        """
+        if category not in self.settings:
+            self.settings[category] = {}
+        self.settings[category][key] = value
+    
     def save_export_format(self, export_format):
         """保存上次使用的导出格式
         
@@ -319,8 +362,7 @@ class SettingsManager:
         return self.preferences_file
     
     def show_settings_window(self):
-        """显示简化的设置窗口，只保留数据管理和字体设置"""
-        # 创建设置窗口
+        """显示设置窗口（新增基本设置标签页）"""
         settings_window = tk.Toplevel(self.app.root)
         settings_window.title("设置")
         settings_window.geometry("800x600")
@@ -328,115 +370,39 @@ class SettingsManager:
         settings_window.transient(self.app.root)
         settings_window.grab_set()
         
-        # 设置窗口图标
+        # 居中显示
+        settings_window.update_idletasks()
+        width = settings_window.winfo_width()
+        height = settings_window.winfo_height()
+        x = (self.app.root.winfo_width() // 2) - (width // 2) + self.app.root.winfo_x()
+        y = (self.app.root.winfo_height() // 2) - (height // 2) + self.app.root.winfo_y()
+        settings_window.geometry(f"+{x}+{y}")
+        
+        # 设置图标
         if hasattr(self.app, 'icon_path') and os.path.exists(self.app.icon_path):
             settings_window.iconbitmap(self.app.icon_path)
         
-        # 创建主框架
-        main_frame = ttk.Frame(settings_window, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # 创建标签页控制器
+        tab_control = ttk.Notebook(settings_window)
         
-        # 创建左侧导航面板
-        nav_frame = ttk.Frame(main_frame, width=180)
-        nav_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        # 1. 数据管理标签页
+        data_tab = ttk.Frame(tab_control)
+        tab_control.add(data_tab, text="数据管理")
+        data_page = self._create_data_page(data_tab)
+        data_page.pack(fill=tk.BOTH, expand=True)
         
-        # 创建右侧内容面板
-        content_frame = ttk.Frame(main_frame)
-        content_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        # 2. 基本设置标签页（新增）
+        basic_tab = ttk.Frame(tab_control)
+        tab_control.add(basic_tab, text="基本设置")
+        self._create_basic_settings_page(basic_tab)  # 新增方法
         
-        # 创建分隔线
-        separator = ttk.Separator(main_frame, orient=tk.VERTICAL)
-        separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        tab_control.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
-        # 当前选中的页面
-        current_page = tk.StringVar(value="font")
-        
-        # 创建导航按钮
-        nav_buttons = {}
-        nav_pages = [
-            ("font", "字体设置", "🔤"),
-            ("data", "数据管理", "💾")
-        ]
-        
-        for page_id, page_name, icon in nav_pages:
-            button = ttk.Button(
-                nav_frame,
-                text=f"{icon} {page_name}",
-                width=18,
-                style="Nav.TButton",
-                command=lambda p=page_id: self._switch_settings_page(current_page, p, content_frame)
-            )
-            button.pack(fill=tk.X, pady=5)
-            nav_buttons[page_id] = button
-        
-        # 创建样式 - 确保所有状态下文本都是黑色
-        style = ttk.Style()
-        style.configure("Nav.TButton", font=("SimHei", 10), foreground="#000000")
-        style.map("Nav.TButton", 
-                  background=[("selected", "#4a86e8"), ("active", "#d9e8ff")],
-                  foreground=[("selected", "#000000"), ("active", "#000000"), ("!active", "#000000")])
-        
-        # 应用选中样式到当前页面按钮
-        self._update_nav_buttons_style(nav_buttons, current_page.get())
-        
-        # 绑定页面切换事件
-        current_page.trace_add("write", lambda *args: self._update_nav_buttons_style(nav_buttons, current_page.get()))
-        
-        # 创建页面内容
-        pages = {
-            "font": self._create_data_page,
-            "data": self._create_data_page
-        }
-        
-        # 显示初始页面
-        page_frame = pages[current_page.get()](content_frame)
-        page_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 保存页面引用
-        current_page_frame = [page_frame]
-        
-        # 更新页面切换函数
-        def switch_page(page_id):
-            current_page.set(page_id)
-            # 移除当前页面
-            current_page_frame[0].pack_forget()
-            current_page_frame[0].destroy()
-            # 创建新页面
-            new_page = pages[page_id](content_frame)
-            new_page.pack(fill=tk.BOTH, expand=True)
-            current_page_frame[0] = new_page
-        
-        # 更新导航按钮命令
-        for page_id, button in nav_buttons.items():
-            button.config(command=lambda p=page_id: switch_page(p))
-        
-        # 创建底部按钮
+        # 底部按钮
         bottom_frame = ttk.Frame(settings_window, padding="10")
         bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        
-        # 保存按钮
-        save_button = ttk.Button(
-            bottom_frame,
-            text="保存设置",
-            command=lambda: self._save_settings(settings_window)
-        )
-        save_button.pack(side=tk.RIGHT, padx=5)
-        
-        # 取消按钮
-        cancel_button = ttk.Button(
-            bottom_frame,
-            text="取消",
-            command=settings_window.destroy
-        )
-        cancel_button.pack(side=tk.RIGHT, padx=5)
-        
-        # 应用按钮
-        apply_button = ttk.Button(
-            bottom_frame,
-            text="应用",
-            command=self._apply_settings
-        )
-        apply_button.pack(side=tk.RIGHT, padx=5)
+        close_button = ttk.Button(bottom_frame, text="关闭", command=settings_window.destroy)
+        close_button.pack(side=tk.RIGHT, padx=5)
     
     def _update_nav_buttons_style(self, nav_buttons, current_page):
         """更新导航按钮样式"""
@@ -449,6 +415,55 @@ class SettingsManager:
     def _switch_settings_page(self, current_page_var, page_id, content_frame):
         """切换设置页面"""
         current_page_var.set(page_id)
+    
+    def _create_basic_settings_page(self, parent):
+        """创建基本设置页面（新增方法）"""
+        frame = ttk.Frame(parent, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 页面标题
+        title_label = ttk.Label(frame, text="基本设置", font=("SimHei", 14, "bold"))
+        title_label.pack(anchor=tk.W, pady=(0, 20))
+        
+        # 更新设置区域
+        update_frame = ttk.LabelFrame(frame, text="更新设置", padding="15")
+        update_frame.pack(fill=tk.X, pady=10)
+        
+        # 自动检测更新勾选框
+        auto_check_var = tk.BooleanVar(value=self.get_setting("update", "auto_check_update"))
+        auto_check_var.trace_add("write", lambda *args: self._save_update_setting("auto_check_update", auto_check_var.get()))
+        ttk.Checkbutton(
+            update_frame,
+            text="启动时自动检测更新",
+            variable=auto_check_var
+        ).pack(anchor=tk.W, pady=5)
+        
+        # 手动检查更新按钮
+        ttk.Button(
+            update_frame,
+            text="手动检查更新",
+            command=self.app.update_checker.check_update_manually,  # 绑定手动更新方法
+            style="Accent.TButton"
+        ).pack(anchor=tk.W, pady=10)
+        
+        # 补充：初始化默认设置（如果不存在）
+        if "update" not in self.settings:
+            self.settings["update"] = {
+                "auto_check_update": True,
+                "ignore_version": ""
+            }
+            self.save_preferences()
+    
+    def _save_update_setting(self, key, value):
+        """保存更新相关设置并立即写入文件
+        
+        Args:
+            key: 设置键名
+            value: 设置值
+        """
+        self.set_setting("update", key, value)
+        self.save_preferences()
+        print(f"已保存更新设置: {key} = {value}")
     
 
     

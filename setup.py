@@ -9,7 +9,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="ancient-chinese-cards",
-    version="1.0.0",
+    version="1.2",
     description="一款专为古文学习设计的卡片管理工具",
     long_description="""
 古文卡片学习软件是一款专为学习古文的学生、教师、学者和古文爱好者设计的卡片管理工具。
@@ -48,6 +48,7 @@ setup(
     python_requires='>=3.6',
     install_requires=[
         'pypinyin>=0.40.0',
+        'requests>=2.25.0',
     ],
     extras_require={
         'dev': [

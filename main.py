@@ -16,6 +16,7 @@ from datetime import datetime
 from ui.main_window import MainWindow
 from ui.settings_manager import SettingsManager
 from card_manager import CardManager
+from update_manager import UpdateChecker
 
 class AncientChineseCardsApp:
     """古文卡片学习软件主应用类"""
@@ -41,6 +42,9 @@ class AncientChineseCardsApp:
         # 初始化设置管理器
         self.settings_manager = SettingsManager(self)
         
+        # 初始化更新管理器（新增）
+        self.update_checker = UpdateChecker(self)
+        
         # 设置中文字体
         self.setup_fonts()
         
@@ -48,6 +52,10 @@ class AncientChineseCardsApp:
         self.main_window = MainWindow(self.root, self.card_manager, self)
         
         # 加载卡片数据
+        
+        # 启动时自动检测更新（根据设置）
+        if self.settings_manager.get_setting("update", "auto_check_update"):
+            self.root.after(1000, self._auto_check_update)  # 延迟1秒检测，不阻塞启动
         self.load_cards()
         
         # 设置窗口关闭事件
@@ -191,6 +199,15 @@ class AncientChineseCardsApp:
         # 调试用：打印图标路径，方便排查问题
         print(f"图标路径：{icon_path}（存在：{os.path.exists(icon_path)}）")
         return icon_path
+    
+    def _auto_check_update(self):
+        """自动检测更新（后台执行）"""
+        def check():
+            if self.update_checker.is_update_available():
+                self.root.after(0, self.update_checker.show_update_prompt)  # 回到主线程显示窗口
+        # 后台线程检测，不阻塞UI
+        import threading
+        threading.Thread(target=check, daemon=True).start()
     
     def _set_window_icon(self, window):
         """给单个窗口设置图标（兼容不同格式和系统）"""
