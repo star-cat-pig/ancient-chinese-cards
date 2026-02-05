@@ -115,8 +115,8 @@ class AncientChineseCardsApp:
         has_modified_cards = self.card_manager.has_modified_cards()
         
         if not has_modified_cards:
-            # 如果没有修改，直接退出
-            self.root.destroy()
+            # 如果没有修改，检查更新后退出
+            self._check_update_before_exit()
             return
         
         # 如果有修改，显示保存提示
@@ -172,19 +172,31 @@ class AncientChineseCardsApp:
         )
         cancel_btn.pack(side=tk.LEFT, padx=5)
     
+    def _check_update_before_exit(self):
+        """退出前检查更新"""
+        # 调用更新管理器的退出检查
+        if hasattr(self, 'update_checker') and self.update_checker:
+            if hasattr(self.update_checker, 'on_app_exit'):
+                self.update_checker.on_app_exit()
+                return  # 关键：让update_checker负责销毁窗口
+        
+        # 如果没有更新管理器或没有待处理的更新，直接退出
+        if self.root.winfo_exists():
+            self.root.destroy()
+    
     def _close_app(self, dialog, save_data):
         """关闭应用程序"""
         dialog.destroy()
+        
+        # 先处理保存逻辑
         if save_data:
             success = self.save_cards()
-            if success:
-                self.root.destroy()
-            else:
+            if not success:
                 # 如果保存失败，不退出程序
                 return
-        else:
-            # 不保存直接退出
-            self.root.destroy()
+        
+        # 检查更新后退出
+        self._check_update_before_exit()
     
     def _get_icon_path(self):
         """获取图标路径（兼容脚本运行和打包后）"""

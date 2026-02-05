@@ -215,8 +215,18 @@ class ImportExportDialog:
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("导入导出卡片")
         self.dialog.geometry("600x400")
+        self.dialog.resizable(False, False)  # 不可调整窗口大小
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
+        
+        # 居中显示
+        self.dialog.update_idletasks()
+        width = self.dialog.winfo_width()
+        height = self.dialog.winfo_height()
+        x = (self.parent.winfo_width() // 2) - (width // 2) + self.parent.winfo_x()
+        y = (self.parent.winfo_height() // 2) - (height // 2) + self.parent.winfo_y()
+        self.dialog.geometry(f"+{x}+{y}")
+        
         self.create_dialog_content(self.dialog)
     
     def create_embedded_view(self):

@@ -27,17 +27,30 @@ class UpdateChecker:
         self.download_thread = None  # 后台下载线程
         self.is_downloading = False  # 下载状态
         self.temp_dir = tempfile.gettempdir()  # 临时下载目录
-        self.update_file_path = None  # 下载后的文件路径
         self.download_progress = 0  # 下载进度（百分比）
         self.download_size = 0  # 已下载大小
         self.total_size = 0  # 总大小
         self.progress_window = None  # 进度窗口
         self.progress_var = None  # 进度条变量
         self.progress_label = None  # 进度标签
+        self.skip_update = False  # 是否跳过本次更新
+        self.retry_count = 0  # 下载重试次数
+        self.max_retries = 3  # 最大重试次数
+        self.has_pending_update = False  # 是否有待处理的更新
+        
+        # 从设置中恢复已下载的更新包路径
+        if hasattr(self.app, 'settings_manager'):
+            self.update_file_path = self.app.settings_manager.get_setting("update", "downloaded_path", "")
+            # 检查保存的路径是否仍然有效
+            if self.update_file_path and not os.path.exists(self.update_file_path):
+                self.update_file_path = None
+                # 清除无效的路径记录
+                self.app.settings_manager.set_setting("update", "downloaded_path", "")
+                self.app.settings_manager.save_preferences()
 
     def _get_version_from_setup(self):
         """获取当前版本号 - 修复打包后版本读取问题"""
-        return "1.2"
+        return "1.3"
 
     def _center_window(self, window, parent_window=None):
         """通用窗口居中方法"""
@@ -82,11 +95,31 @@ class UpdateChecker:
         """获取当前软件版本"""
         return self.current_version
 
+    def _get_requests_session(self):
+        """获取配置了代理的requests会话"""
+        session = requests.Session()
+        
+        # 尝试从系统环境变量获取代理设置
+        proxy_env = os.environ.get('HTTP_PROXY') or os.environ.get('http_proxy')
+        if proxy_env:
+            session.proxies = {
+                'http': proxy_env,
+                'https': proxy_env
+            }
+        
+        # 也可以从应用设置中获取用户配置的代理（如果需要的话）
+        # proxy_setting = self.app.settings_manager.get_setting("network", "proxy", "")
+        # if proxy_setting:
+        #     session.proxies = {'http': proxy_setting, 'https': proxy_setting}
+        
+        return session
+
     def fetch_latest_release(self):
         """从GitHub获取最新release信息（优先API，失败降级+统一版本格式）"""
         api_url = f"https://api.github.com/repos/{self.github_owner}/{self.github_repo}/releases/latest"
         try:
-            response = requests.get(api_url, timeout=10)
+            session = self._get_requests_session()
+            response = session.get(api_url, timeout=10)
             if response.status_code == 200:
                 release_data = response.json()
                 # 统一格式：移除v前缀
@@ -260,8 +293,18 @@ class UpdateChecker:
         progress_bar.pack(pady=20)
         self.progress_label = tk.Label(self.progress_window, text="准备下载...", font=("SimHei", 10))
         self.progress_label.pack(pady=10)
-        cancel_btn = ttk.Button(self.progress_window, text="取消下载", command=self._cancel_download)
-        cancel_btn.pack(pady=5)
+        
+        # 按钮框架
+        buttons_frame = ttk.Frame(self.progress_window)
+        buttons_frame.pack(pady=5)
+        
+        # 后台下载按钮
+        background_btn = ttk.Button(buttons_frame, text="后台下载", command=self._background_download)
+        background_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # 取消下载按钮
+        cancel_btn = ttk.Button(buttons_frame, text="取消下载", command=self._cancel_download)
+        cancel_btn.pack(side=tk.LEFT)
         self._update_progress_gui()
 
     def _cancel_download(self):
@@ -271,80 +314,248 @@ class UpdateChecker:
             self.progress_window.destroy()
             self.progress_window = None
         messagebox.showinfo("提示", "下载已取消")
+    
+    def _background_download(self):
+        """后台下载"""
+        if self.progress_window:
+            self.progress_window.destroy()
+            self.progress_window = None
+        messagebox.showinfo("提示", "更新包将在后台继续下载，完成后会通知您")
+    
+    def _check_existing_update_package(self):
+        """检查是否已存在完整的更新包"""
+        # 新增：先校验download_url是否有效，避免空值报错
+        if not self.download_url or not isinstance(self.download_url, str):
+            print("下载链接为空或无效，跳过更新包检查")
+            return False
+        
+        filename = os.path.basename(self.download_url)
+        self.update_file_path = os.path.join(self.temp_dir, filename)
+        
+        if not os.path.exists(self.update_file_path):
+            return False
+        
+        # 获取文件大小
+        try:
+            file_size = os.path.getsize(self.update_file_path)
+            
+            # 如果已知总大小，直接比较
+            if self.total_size > 0:
+                if file_size == self.total_size:
+                    print(f"发现完整的更新包，大小: {file_size} 字节")
+                    return True
+                else:
+                    print(f"更新包不完整，期望大小: {self.total_size}，实际大小: {file_size}")
+                    # 删除不完整的文件
+                    os.remove(self.update_file_path)
+                    return False
+            
+            # 如果未知总大小，尝试从服务器获取（添加异常捕获）
+            session = self._get_requests_session()
+            try:
+                response = session.head(self.download_url, timeout=10)  # 缩短超时时间
+                response.raise_for_status()  # 抛出HTTP错误
+            except Exception as e:
+                print(f"获取文件大小失败（网络/SSL问题）: {e}")
+                # 降级处理：直接认为文件完整（避免因网络问题阻断流程）
+                print(f"降级处理：假设本地文件完整（{self.update_file_path}）")
+                return True
+            
+            if response.status_code == 200:
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    self.total_size = int(content_length)
+                    if file_size == self.total_size:
+                        print(f"发现完整的更新包，大小: {file_size} 字节")
+                        return True
+                    else:
+                        print(f"更新包不完整，期望大小: {self.total_size}，实际大小: {file_size}")
+                        # 删除不完整的文件
+                        os.remove(self.update_file_path)
+            return False
+        except Exception as e:
+            print(f"检查更新包完整性失败: {e}")
+            return False
 
     def download_update_in_background(self):
         """后台下载更新（不阻塞主线程）"""
         if not self.download_url:
             messagebox.showerror("错误", "未找到对应平台的更新包（仅支持exe/dmg/tar.gz）")
             return
+        
         # 前置校验：Windows必须是exe
         if sys.platform == "win32" and not self.download_url.endswith(".exe"):
             messagebox.showerror("错误", "下载的更新包不是Windows可执行文件（.exe），无法更新")
             return
+        
+        # 检查是否已有完整的更新包
+        if self._check_existing_update_package():
+            if self.progress_window:
+                self.app.root.after(0, self.progress_window.destroy)
+                self.progress_window = None
+            self.app.root.after(0, self.show_restart_prompt)
+            return
+        
         self.is_downloading = True
         self.download_progress = 0
         self.download_size = 0
         self.total_size = 0
+        
         if hasattr(self.app, 'root') and self.app.root:
             self.app.root.after(0, self._show_download_progress)
+        
         filename = os.path.basename(self.download_url)
         self.update_file_path = os.path.join(self.temp_dir, filename)
-        try:
-            # 延长下载超时时间到120秒（避免大文件超时）
-            response = requests.get(self.download_url, stream=True, timeout=120)
-            self.total_size = int(response.headers.get("content-length", 0))
-            self.download_size = 0
-            with open(self.update_file_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if not self.is_downloading:
-                        break
-                    if chunk:
-                        f.write(chunk)
-                        self.download_size += len(chunk)
-            if self.is_downloading and os.path.exists(self.update_file_path):
+        
+        # 删除可能存在的不完整文件
+        if os.path.exists(self.update_file_path):
+            try:
+                os.remove(self.update_file_path)
+                print(f"删除不完整的更新包: {self.update_file_path}")
+            except Exception as e:
+                print(f"删除不完整文件失败: {e}")
+        
+        self.retry_count = 0
+        
+        while self.retry_count < self.max_retries:
+            try:
+                # 延长下载超时时间到120秒（避免大文件超时）
+                session = self._get_requests_session()
+                response = session.get(self.download_url, stream=True, timeout=120)
+                
+                if response.status_code != 200:
+                    raise requests.exceptions.HTTPError(f"HTTP错误状态码: {response.status_code}")
+                
+                self.total_size = int(response.headers.get("content-length", 0))
+                self.download_size = 0
+                
+                with open(self.update_file_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if not self.is_downloading:
+                            break
+                        if chunk:
+                            f.write(chunk)
+                            self.download_size += len(chunk)
+                
+                if not self.is_downloading:
+                    # 用户取消下载
+                    if os.path.exists(self.update_file_path):
+                        os.remove(self.update_file_path)
+                    break
+                
                 # 校验文件大小
-                if self.total_size > 0 and os.path.getsize(self.update_file_path) < self.total_size:
-                    messagebox.showerror("下载失败", "更新包下载不完整，请重试")
-                    os.remove(self.update_file_path)
-                    return
+                if os.path.exists(self.update_file_path):
+                    file_size = os.path.getsize(self.update_file_path)
+                    if self.total_size > 0 and file_size == self.total_size:
+                        print(f"更新包下载完成，大小: {file_size} 字节")
+                        if self.progress_window:
+                            self.app.root.after(0, self.progress_window.destroy)
+                            self.progress_window = None
+                        self.app.root.after(0, self.show_restart_prompt)
+                        # 清除稍后更新标记
+                        if hasattr(self.app, 'settings_manager'):
+                            self.app.settings_manager.set_setting("update", "pending_update", "")
+                            # 保存下载路径到设置
+                            self.app.settings_manager.set_setting("update", "downloaded_path", self.update_file_path)
+                            self.app.settings_manager.save_preferences()
+                        # 设置有待处理更新的标志
+                        self.has_pending_update = True
+                        return
+                    else:
+                        print(f"更新包下载不完整，期望大小: {self.total_size}，实际大小: {file_size}")
+                        self.retry_count += 1
+                        if self.retry_count < self.max_retries:
+                            print(f"第 {self.retry_count} 次重试下载...")
+                            # 删除不完整文件
+                            os.remove(self.update_file_path)
+                            continue
+                        else:
+                            raise Exception(f"更新包下载不完整，已重试 {self.max_retries} 次")
+                else:
+                    raise Exception("更新包文件不存在")
+                    
+            except requests.exceptions.ConnectionError:
+                self.retry_count += 1
+                if self.retry_count < self.max_retries:
+                    print(f"网络连接失败，第 {self.retry_count} 次重试...")
+                    time.sleep(2)  # 等待2秒后重试
+                else:
+                    self.is_downloading = False
+                    if self.progress_window:
+                        self.app.root.after(0, self.progress_window.destroy)
+                        self.progress_window = None
+                    self.app.root.after(0, lambda: messagebox.showerror(
+                        "网络错误", 
+                        f"下载过程中网络连接失败，已重试 {self.max_retries} 次，请检查网络设置后重试。"
+                    ))
+                    break
+                    
+            except requests.exceptions.Timeout:
+                self.retry_count += 1
+                if self.retry_count < self.max_retries:
+                    print(f"下载超时，第 {self.retry_count} 次重试...")
+                    time.sleep(2)
+                else:
+                    self.is_downloading = False
+                    if self.progress_window:
+                        self.app.root.after(0, self.progress_window.destroy)
+                        self.progress_window = None
+                    self.app.root.after(0, lambda: messagebox.showerror(
+                        "下载超时", 
+                        f"更新包下载超时，已重试 {self.max_retries} 次，请检查网络带宽或稍后重试。"
+                    ))
+                    break
+                    
+            except requests.exceptions.HTTPError as e:
+                self.is_downloading = False
                 if self.progress_window:
                     self.app.root.after(0, self.progress_window.destroy)
                     self.progress_window = None
-                self.show_restart_prompt()
-            elif not self.is_downloading and os.path.exists(self.update_file_path):
-                os.remove(self.update_file_path)
-        except requests.exceptions.ConnectionError:
+                self.app.root.after(0, lambda: messagebox.showerror(
+                    "下载失败", 
+                    f"链接无效（状态码：{e.response.status_code if hasattr(e, 'response') else '未知'}），请联系开发者确认更新包地址"
+                ))
+                break
+                
+            except PermissionError:
+                self.is_downloading = False
+                if self.progress_window:
+                    self.app.root.after(0, self.progress_window.destroy)
+                    self.progress_window = None
+                self.app.root.after(0, lambda: messagebox.showerror(
+                    "权限不足", 
+                    "无法写入临时目录，请以管理员身份运行软件"
+                ))
+                break
+                
+            except Exception as e:
+                self.retry_count += 1
+                if self.retry_count < self.max_retries:
+                    print(f"下载出错: {e}，第 {self.retry_count} 次重试...")
+                    time.sleep(2)
+                else:
+                    self.is_downloading = False
+                    if self.progress_window:
+                        self.app.root.after(0, self.progress_window.destroy)
+                        self.progress_window = None
+                    self.app.root.after(0, lambda: messagebox.showerror(
+                        "下载失败", 
+                        f"更新包下载出错: {str(e)}，已重试 {self.max_retries} 次"
+                    ))
+                    break
+        
+        if self.is_downloading:
             self.is_downloading = False
-            if self.progress_window:
-                self.app.root.after(0, self.progress_window.destroy)
-                self.progress_window = None
-            messagebox.showerror("网络错误", "下载过程中网络连接失败，请检查网络设置后重试")
-        except requests.exceptions.Timeout:
-            self.is_downloading = False
-            if self.progress_window:
-                self.app.root.after(0, self.progress_window.destroy)
-                self.progress_window = None
-            messagebox.showerror("下载超时", "更新包下载超时，请检查网络带宽或稍后重试")
-        except requests.exceptions.HTTPError as e:
-            self.is_downloading = False
-            if self.progress_window:
-                self.app.root.after(0, self.progress_window.destroy)
-                self.progress_window = None
-            messagebox.showerror("下载失败", f"链接无效（状态码：{e.response.status_code}），请联系开发者确认更新包地址")
-        except PermissionError:
-            self.is_downloading = False
-            if self.progress_window:
-                self.app.root.after(0, self.progress_window.destroy)
-                self.progress_window = None
-            messagebox.showerror("权限不足", "无法写入临时目录，请以管理员身份运行软件")
-        except Exception as e:
-            self.is_downloading = False
-            if self.progress_window:
-                self.app.root.after(0, self.progress_window.destroy)
-                self.progress_window = None
-            messagebox.showerror("下载失败", f"更新包下载出错: {str(e)}")
-        finally:
-            self.is_downloading = False
+        
+        # 如果下载失败且文件存在，删除不完整文件
+        if os.path.exists(self.update_file_path):
+            try:
+                file_size = os.path.getsize(self.update_file_path)
+                if self.total_size > 0 and file_size != self.total_size:
+                    os.remove(self.update_file_path)
+                    print(f"删除不完整的更新包: {self.update_file_path}")
+            except Exception as e:
+                print(f"清理不完整文件失败: {e}")
 
     def start_background_download(self):
         """启动后台下载线程"""
@@ -352,11 +563,27 @@ class UpdateChecker:
             self.download_thread = threading.Thread(target=self.download_update_in_background, daemon=True)
             self.download_thread.start()
 
-    def show_update_prompt(self):
-        """显示更新提示窗口"""
+    def show_update_prompt(self, force_show=False):
+        """显示更新提示窗口（修复勾选状态记忆）
+        
+        Args:
+            force_show: 是否强制显示，True时忽略版本检查
+        """
         ignored_version = self.app.settings_manager.get_setting("update", "ignore_version", "").lstrip("v")
-        if ignored_version and self._compare_version(self.latest_version.lstrip("v"), ignored_version) != 1:
+        current_latest_version = self.latest_version.lstrip("v")
+        
+        # 核心修复：根据已忽略版本自动同步勾选状态
+        ignore_var = tk.BooleanVar(value=(ignored_version == current_latest_version))
+        
+        # 非强制模式下，已忽略当前版本且无新版本，直接返回
+        if not force_show and ignored_version and self._compare_version(current_latest_version, ignored_version) != 1:
             return
+        
+        # 检查是否已有完整的更新包
+        if self._check_existing_update_package():
+            self.show_restart_prompt()
+            return
+        
         prompt_window = tk.Toplevel(self.app.root)
         prompt_window.title(f"发现更新 v{self.latest_version}")
         prompt_window.geometry("700x700")
@@ -369,19 +596,35 @@ class UpdateChecker:
         elif hasattr(self.app, 'icon_path') and os.path.exists(self.app.icon_path):
             prompt_window.iconbitmap(self.app.icon_path)
         self._center_window(prompt_window)
+        # 添加更新推荐文字
+        welcome_label = ttk.Label(prompt_window, 
+                                 text="亲爱的用户，为了改进软件体验，我们带来了最新的版本。我们建议您及时更新，以享受最新的体验！",
+                                 font=("SimHei", 14),
+                                 foreground="#2c3e50",
+                                 justify=tk.LEFT,
+                                 wraplength=650)
+        welcome_label.pack(pady=(10, 5))
+        
+        # 版本更新说明
         note_text = tk.Text(prompt_window, font=("SimHei", 16))
         note_text.insert(tk.END, self.release_note or "本次更新优化了多项功能，提升稳定性和用户体验")
         note_text.config(state=tk.DISABLED, wrap=tk.WORD)
         note_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        ignore_var = tk.BooleanVar(value=False)
         ignore_check = ttk.Checkbutton(prompt_window, text="不要再提醒我", variable=ignore_var)
         ignore_check.pack(anchor=tk.W, padx=10, pady=5)
         btn_frame = ttk.Frame(prompt_window)
         btn_frame.pack(fill=tk.X, padx=10, pady=10)
-        cancel_btn = ttk.Button(btn_frame, text="取消", command=prompt_window.destroy)
+        
+        # 取消按钮（忽略本次更新）
+        cancel_btn = ttk.Button(btn_frame, text="取消", command=lambda: self.on_update_cancel(prompt_window, ignore_var))
         cancel_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # 立即更新按钮
         update_btn = ttk.Button(btn_frame, text="立即更新", command=lambda: self.on_update_confirm(prompt_window, ignore_var))
         update_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # 绑定窗口关闭事件
+        prompt_window.protocol("WM_DELETE_WINDOW", lambda: self.on_update_cancel(prompt_window, ignore_var))
 
     def on_update_confirm(self, prompt_window, ignore_var):
         """用户确认更新"""
@@ -391,13 +634,112 @@ class UpdateChecker:
             self.app.settings_manager.set_setting("update", "ignore_version", self.latest_version.lstrip("v"))
             self.app.settings_manager.save_preferences()
             print(f"已保存忽略版本设置: {self.latest_version}")
-        self.start_background_download()
+        else:
+            # 用户取消选择"不要再提醒我"，清除忽略版本设置
+            current_ignored = self.app.settings_manager.get_setting("update", "ignore_version", "")
+            if current_ignored == self.latest_version.lstrip("v"):
+                self.app.settings_manager.set_setting("update", "ignore_version", "")
+                self.app.settings_manager.save_preferences()
+                print(f"已清除忽略版本设置: {self.latest_version}")
+        self.skip_update = False
+        self.start_background_download()    
+    def on_update_later(self, prompt_window):
+        """用户选择稍后更新"""
+        if prompt_window:
+            prompt_window.destroy()
+        self.skip_update = False  # 关键：改为False，避免退出时被跳过
+        # 保存稍后更新标记（确保写入设置）
+        if hasattr(self.app, 'settings_manager'):
+            self.app.settings_manager.set_setting("update", "pending_update", self.latest_version.lstrip("v"))
+            self.app.settings_manager.save_preferences()
+            print(f"已保存稍后更新标记: {self.latest_version}")
+        
+        # 关键：移除重复的事件绑定（避免覆盖主窗口事件）
+        # 原代码：self.app.root.protocol("WM_DELETE_WINDOW", self.on_app_exit)    
+    def on_update_cancel(self, prompt_window, ignore_var):
+        """用户取消更新"""
+        prompt_window.destroy()
+        if ignore_var.get():
+            # 保存忽略版本时统一格式（移除v前缀）
+            self.app.settings_manager.set_setting("update", "ignore_version", self.latest_version.lstrip("v"))
+            self.app.settings_manager.save_preferences()
+            print(f"已保存忽略版本设置: {self.latest_version}")
+        else:
+            # 用户取消选择"不要再提醒我"，清除忽略版本设置
+            current_ignored = self.app.settings_manager.get_setting("update", "ignore_version", "")
+            if current_ignored == self.latest_version.lstrip("v"):
+                self.app.settings_manager.set_setting("update", "ignore_version", "")
+                self.app.settings_manager.save_preferences()
+                print(f"已清除忽略版本设置: {self.latest_version}")
+        self.skip_update = True
+    
+    def on_app_exit(self):
+        """程序退出时的处理"""
+        # 重新读取设置（避免内存中值不一致）
+        pending_version = ""
+        if hasattr(self.app, 'settings_manager'):
+            pending_version = self.app.settings_manager.get_setting("update", "pending_update", "").strip()
+        
+        # 补全判断条件：确保所有条件都满足才弹窗
+        has_valid_update = (
+            pending_version  # 有稍后更新标记
+            and not self.skip_update  # 未跳过
+            and self.update_file_path  # 有更新包路径
+            and os.path.exists(self.update_file_path)  # 更新包存在
+            and os.path.getsize(self.update_file_path) > 1024  # 确保文件不为空（大于1KB）
+        )
+        
+        if has_valid_update:
+            # 询问用户是否更新
+            result = messagebox.askyesno("更新提醒", f"有新版本 v{pending_version} 可用，是否现在更新？")
+            if result:
+                # 清除稍后更新标记
+                self.app.settings_manager.set_setting("update", "pending_update", "")
+                self.app.settings_manager.save_preferences()
+                # 直接执行更新脚本
+                self.replace_and_restart()
+                return  # 不退出程序，等待更新完成
+        # 正常退出程序（确保销毁窗口）
+        if hasattr(self.app, 'root') and self.app.root.winfo_exists():
+            self.app.root.destroy()
 
     def show_restart_prompt(self):
         """下载完成，提示重启替换"""
-        if messagebox.askyesno("更新完成", f"更新包已下载完成！\n是否立即重启软件以应用 v{self.latest_version} 更新？"):
-            self.replace_and_restart()
+        if hasattr(self.app, 'root') and self.app.root:
+            # 在主线程中显示对话框
+            def show_prompt():
+                result = messagebox.askyesno(
+                    "更新完成", 
+                    f"更新包已下载完成！\n是否立即重启软件以应用 v{self.latest_version} 更新？\n\n选择'否'将在程序退出时再次提醒。"
+                )
+                if result:
+                    # 用户同意更新
+                    self.replace_and_restart()
+                else:
+                    # 用户选择稍后更新（原"否"选项）
+                    self.on_update_later(None)
+            
+            self.app.root.after(0, show_prompt)
+        else:
+            # 如果没有主窗口，直接询问
+            if messagebox.askyesno("更新完成", f"更新包已下载完成！\n是否立即重启软件以应用 v{self.latest_version} 更新？"):
+                self.replace_and_restart()
+            else:
+                # 用户选择稍后更新
+                self.on_update_later(None)
 
+    def install_update(self):
+        """立即安装更新"""
+        """立即安装更新"""
+        if not self.update_file_path or not os.path.exists(self.update_file_path):
+            # 如果没有下载好的更新包，先检查是否有完整的更新包
+            if not self._check_existing_update_package():
+                messagebox.showerror("错误", "更新包不存在，无法应用更新")
+                return
+        
+        # 调用替换和重启方法
+        self.replace_and_restart()
+    
     def replace_and_restart(self):
         """替换原文件并重启（编码修复版）"""
         if not self.update_file_path or not os.path.exists(self.update_file_path):
@@ -566,11 +908,23 @@ exit 0
             )
 
     def check_update_manually(self):
-        """手动检查更新（绑定按钮）"""
-        # 手动检查时强制刷新，不缓存忽略版本
+        """手动检查更新（强制弹窗，无视跳过标记）"""
+        print("手动触发更新检查...")
+        # 核心：强制清空版本缓存，不依赖 is_update_available（避免被忽略版本拦截）
         self.latest_version = None
         self.download_url = None
-        if self.is_update_available():
-            self.show_update_prompt()
+        
+        # 1. 直接获取最新版本信息（不经过 is_update_available 的忽略判断）
+        if self.fetch_latest_release():
+            # 统一版本格式（去除 v 前缀，避免格式不一致导致对比失败）
+            current_version = self.current_version.lstrip("v")
+            latest_version = self.latest_version.lstrip("v")
+            
+            # 2. 手动对比版本：只要最新版本 > 当前版本，就强制弹窗
+            if self._compare_version(current_version, latest_version) == -1:
+                # 强制显示更新提示框，传入force_show=True确保绕过忽略版本检查
+                self.show_update_prompt(force_show=True)
+            else:
+                messagebox.showinfo("无更新", f"当前已是最新版本（v{self.current_version}）！")
         else:
-            messagebox.showinfo("无更新", f"当前已是最新版本（v{self.current_version}）！")
+            messagebox.showwarning("检测失败", "无法获取最新版本信息，请检查网络连接后重试。")

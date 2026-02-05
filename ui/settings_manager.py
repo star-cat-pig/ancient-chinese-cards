@@ -32,6 +32,10 @@ class SettingsManager:
         
         # 默认设置
         self.default_settings = {
+            'editor': {
+                'auto_fill_source': False,
+                'last_source': ''
+            },
             'data': {
                 # 数据相关设置
             },
@@ -117,6 +121,10 @@ class SettingsManager:
     
     def _merge_settings(self, loaded_settings):
         """合并加载的设置和默认设置"""
+        # 合并编辑器设置（新增）
+        if 'editor' in loaded_settings:
+            self.settings['editor'].update(loaded_settings['editor'])
+        
         # 合并排序设置
         if 'sort' in loaded_settings:
             self.settings['sort'].update(loaded_settings['sort'])
@@ -366,7 +374,7 @@ class SettingsManager:
         settings_window = tk.Toplevel(self.app.root)
         settings_window.title("设置")
         settings_window.geometry("800x600")
-        settings_window.resizable(True, True)
+        settings_window.resizable(False, False)  # 不可调整窗口大小
         settings_window.transient(self.app.root)
         settings_window.grab_set()
         
@@ -385,24 +393,52 @@ class SettingsManager:
         # 创建标签页控制器
         tab_control = ttk.Notebook(settings_window)
         
-        # 1. 数据管理标签页
+        # 1. 基本设置标签页
+        basic_tab = ttk.Frame(tab_control)
+        tab_control.add(basic_tab, text="基本设置")
+        self._create_basic_settings_page(basic_tab)
+        
+        # 2. 数据管理标签页
         data_tab = ttk.Frame(tab_control)
         tab_control.add(data_tab, text="数据管理")
         data_page = self._create_data_page(data_tab)
         data_page.pack(fill=tk.BOTH, expand=True)
-        
-        # 2. 基本设置标签页（新增）
-        basic_tab = ttk.Frame(tab_control)
-        tab_control.add(basic_tab, text="基本设置")
-        self._create_basic_settings_page(basic_tab)  # 新增方法
         
         tab_control.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
         # 底部按钮
         bottom_frame = ttk.Frame(settings_window, padding="10")
         bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        close_button = ttk.Button(bottom_frame, text="关闭", command=settings_window.destroy)
-        close_button.pack(side=tk.RIGHT, padx=5)
+        
+        # 确定按钮（保存配置）
+        def on_confirm():
+            """确认并保存设置"""
+            try:
+                # 保存更新设置
+                if hasattr(self, '_auto_check_var'):
+                    self.set_setting("update", "auto_check_update", self._auto_check_var.get())
+                
+                # 保存编辑器设置
+                if hasattr(self, '_auto_fill_source_var'):
+                    self.set_setting("editor", "auto_fill_source", self._auto_fill_source_var.get())
+                
+                # 保存所有设置到文件
+                self.save_preferences()
+                print("设置已保存")
+                
+                # 关闭窗口
+                settings_window.destroy()
+            except Exception as e:
+                print(f"保存设置时出错: {str(e)}")
+                messagebox.showerror("错误", f"保存设置失败: {str(e)}")
+        
+        # 取消按钮
+        cancel_button = ttk.Button(bottom_frame, text="取消", command=settings_window.destroy)
+        cancel_button.pack(side=tk.RIGHT, padx=5)
+        
+        # 确定按钮
+        confirm_button = ttk.Button(bottom_frame, text="确定", command=on_confirm, style="Accent.TButton")
+        confirm_button.pack(side=tk.RIGHT, padx=5)
     
     def _update_nav_buttons_style(self, nav_buttons, current_page):
         """更新导航按钮样式"""
@@ -431,12 +467,14 @@ class SettingsManager:
         
         # 自动检测更新勾选框
         auto_check_var = tk.BooleanVar(value=self.get_setting("update", "auto_check_update"))
-        auto_check_var.trace_add("write", lambda *args: self._save_update_setting("auto_check_update", auto_check_var.get()))
         ttk.Checkbutton(
             update_frame,
             text="启动时自动检测更新",
             variable=auto_check_var
         ).pack(anchor=tk.W, pady=5)
+        
+        # 保存变量引用，供确定按钮使用
+        self._auto_check_var = auto_check_var
         
         # 手动检查更新按钮
         ttk.Button(
@@ -445,6 +483,21 @@ class SettingsManager:
             command=self.app.update_checker.check_update_manually,  # 绑定手动更新方法
             style="Accent.TButton"
         ).pack(anchor=tk.W, pady=10)
+        
+        # 卡片编辑设置区域
+        editor_frame = ttk.LabelFrame(frame, text="卡片编辑设置", padding="15")
+        editor_frame.pack(fill=tk.X, pady=10)
+        
+        # 自动填充上次出处勾选框
+        auto_fill_source_var = tk.BooleanVar(value=self.get_setting("editor", "auto_fill_source", False))
+        ttk.Checkbutton(
+            editor_frame,
+            text="自动填充上一次添加卡片使用的\"出处\"说明",
+            variable=auto_fill_source_var
+        ).pack(anchor=tk.W, pady=5)
+        
+        # 保存变量引用，供确定按钮使用
+        self._auto_fill_source_var = auto_fill_source_var
         
         # 补充：初始化默认设置（如果不存在）
         if "update" not in self.settings:
@@ -464,6 +517,17 @@ class SettingsManager:
         self.set_setting("update", key, value)
         self.save_preferences()
         print(f"已保存更新设置: {key} = {value}")
+    
+    def _save_editor_setting(self, key, value):
+        """保存编辑器相关设置并立即写入文件
+        
+        Args:
+            key: 设置键名
+            value: 设置值
+        """
+        self.set_setting("editor", key, value)
+        self.save_preferences()
+        print(f"已保存编辑器设置: {key} = {value}")
     
 
     

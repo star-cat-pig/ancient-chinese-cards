@@ -38,6 +38,8 @@ class CardManager:
         self.data_file = os.path.join(self.user_data_dir, data_file)
         self.cards: List[Dict[str, Any]] = []
         self.modified_cards = set()  # 用于跟踪被修改的卡片ID
+        # 撤销栈 - 用于保存删除操作的卡片数据
+        self.undo_stack = []
         # 确保数据目录存在
         self.ensure_data_directory()
         # 加载卡片数据
@@ -303,7 +305,7 @@ class CardManager:
     
     def delete_card(self, card_id: str) -> bool:
         """
-        删除卡片
+        删除卡片（支持撤销）
         
         Args:
             card_id: 卡片ID
@@ -313,6 +315,19 @@ class CardManager:
         """
         for i, card in enumerate(self.cards):
             if card['id'] == card_id:
+                # 保存卡片数据到撤销栈
+                self.undo_stack.append({
+                    'action': 'delete',
+                    'card_data': card.copy(),
+                    'index': i,
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+                # 限制撤销栈大小，防止内存占用过大
+                if len(self.undo_stack) > 50:  # 最多保存50个操作
+                    self.undo_stack.pop(0)
+                
+                # 删除卡片
                 del self.cards[i]
                 self.save_cards()
                 return True
@@ -335,6 +350,59 @@ class CardManager:
         
         return None
     
+    def toggle_favorite(self, card_id: str) -> bool:
+        """
+        切换卡片的收藏状态
+        
+        Args:
+            card_id: 卡片ID
+        
+        Returns:
+            bool: 操作后的收藏状态（True为已收藏，False为未收藏）
+        """
+        for card in self.cards:
+            if card['id'] == card_id:
+                # 切换收藏状态
+                is_favorite = not card.get('is_favorite', False)
+                card['is_favorite'] = is_favorite
+                
+                # 标记为已修改
+                self.modified_cards.add(card_id)
+                
+                # 保存卡片
+                self.save_cards()
+                
+                return is_favorite
+        
+        return False
+    
+    def toggle_favorites(self, card_ids: List[str]) -> Dict[str, bool]:
+        """
+        批量切换卡片的收藏状态
+        
+        Args:
+            card_ids: 卡片ID列表
+        
+        Returns:
+            Dict[str, bool]: 操作后的收藏状态字典 {card_id: is_favorite}
+        """
+        results = {}
+        
+        for card_id in card_ids:
+            is_favorite = self.toggle_favorite(card_id)
+            results[card_id] = is_favorite
+        
+        return results
+    
+    def get_favorite_cards(self) -> List[Dict[str, Any]]:
+        """
+        获取所有收藏的卡片
+        
+        Returns:
+            List[Dict[str, Any]]: 收藏的卡片列表
+        """
+        return [card for card in self.cards if card.get('is_favorite', False)]
+    
     def get_all_cards(self) -> List[Dict[str, Any]]:
         """
         获取所有卡片
@@ -343,6 +411,49 @@ class CardManager:
             List[Dict[str, Any]]: 所有卡片列表
         """
         return self.cards
+    
+    def undo_last_action(self) -> bool:
+        """
+        撤销上一个操作（目前支持撤销删除操作）
+        
+        Returns:
+            bool: 撤销是否成功
+        """
+        if not self.undo_stack:
+            return False
+        
+        # 获取最后一个操作
+        last_action = self.undo_stack.pop()
+        
+        if last_action['action'] == 'delete':
+            # 撤销删除操作 - 恢复被删除的卡片
+            card_data = last_action['card_data']
+            index = last_action.get('index', len(self.cards))
+            
+            # 确保索引有效
+            if index < 0:
+                index = 0
+            elif index > len(self.cards):
+                index = len(self.cards)
+            
+            # 恢复卡片到原位置
+            self.cards.insert(index, card_data)
+            
+            # 保存恢复后的数据
+            self.save_cards()
+            
+            return True
+        
+        return False
+    
+    def can_undo(self) -> bool:
+        """
+        检查是否有可撤销的操作
+        
+        Returns:
+            bool: 是否有可撤销的操作
+        """
+        return len(self.undo_stack) > 0
     
     def sort_cards(self) -> List[Dict[str, Any]]:
         """

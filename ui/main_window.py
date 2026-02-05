@@ -51,6 +51,9 @@ class MainWindow:
         self.last_mouse_button = 1  # 默认是左键
         self.selected_card_id = None  # 当前选中的卡片ID
         
+        # 收藏功能相关状态
+        self.is_favorites_view = False  # 当前是否在收藏视图模式
+        
         # 创建主框架
         self.create_main_frame()
         
@@ -135,6 +138,18 @@ class MainWindow:
         # 暂时移除保存和退出选项
         # self.file_menu.add_command(label="保存", command=self.save_cards)
         # self.file_menu.add_separator()
+        
+        # 收藏相关选项（放在导出卡片前面）
+        self.file_menu.add_command(label="收藏", command=self.toggle_favorites_view, state="normal", compound=tk.RIGHT)
+        # 获取收藏菜单项的索引
+        self.favorites_menu_index = 0  # 第一个菜单项
+        # 添加快捷键说明
+        self.file_menu.entryconfig(self.favorites_menu_index, label="收藏  \tAlt+D")
+        
+        # 添加导出选项（调用原导出卡片对话框）
+        self.file_menu.add_command(label="导出卡片", command=self.show_import_export_dialog)
+        
+        # self.file_menu.add_separator()
         # self.file_menu.add_command(label="退出", command=self.root.quit)
         self.menu_bar.add_cascade(label="文件", menu=self.file_menu)
         
@@ -150,7 +165,7 @@ class MainWindow:
         
         # 帮助菜单
         self.help_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.help_menu.add_command(label="使用帮助", command=self.show_help)
+        self.help_menu.add_command(label="使用帮助  \tF1", command=self.show_help)
         self.help_menu.add_command(label="更新日志", command=self.show_update_log)
         self.help_menu.add_command(label="关于", command=self.show_about)
         self.menu_bar.add_cascade(label="帮助", menu=self.help_menu)
@@ -188,6 +203,13 @@ class MainWindow:
         )
         self.nav_buttons['add_card'].pack(pady=5)
         
+        # 添加工具提示（使用自定义属性）
+        self.nav_buttons['add_card']._tooltip = "添加一张新卡片，或Ctrl+N新建"
+        
+        # 绑定鼠标悬停事件显示工具提示
+        self.nav_buttons['add_card'].bind('<Enter>', lambda event: self.show_tooltip(event))
+        self.nav_buttons['add_card'].bind('<Leave>', lambda event: self.hide_tooltip())
+        
         # 搜索按钮
         self.nav_buttons['search'] = ttk.Button(
             self.nav_frame, 
@@ -206,14 +228,7 @@ class MainWindow:
         # )
         # self.nav_buttons['import'].pack(pady=5)
         
-        # 导出按钮
-        self.nav_buttons['export'] = ttk.Button(
-            self.nav_frame, 
-            text="导出卡片", 
-            command=self.show_import_export_dialog,
-            width=15
-        )
-        self.nav_buttons['export'].pack(pady=5)
+        # 导航栏按钮已简化
         
         # 设置当前选中的导航按钮
         self.current_nav = 'overview'
@@ -291,6 +306,9 @@ class MainWindow:
         if view_name in self.views:
             self.views[view_name].pack(fill=tk.BOTH, expand=True)
         
+        # 记录当前视图
+        self.current_view = view_name
+        
         # 高亮对应的导航按钮
         self.highlight_nav_button(view_name)
     
@@ -303,6 +321,8 @@ class MainWindow:
         """显示添加卡片视图"""
         self.show_view('add_card')
         self.card_editor.reset_form()
+        # 聚焦到第一个输入字段
+        self.card_editor.focus_first_field()
     
     def show_edit_card(self, card_id):
         """显示编辑卡片视图 - 使用卡片形式的详情窗口"""
@@ -594,7 +614,7 @@ class MainWindow:
     def show_about(self):
         """显示关于信息"""
         about_text = """
-古文卡片学习软件 v1.2
+古文卡片学习软件 v1.3
 
 一款专为古文学习设计的卡片管理工具，
 帮助用户制作、管理和搜索古文学习卡片。
@@ -743,10 +763,28 @@ class MainWindow:
     
     def bind_events(self):
         """绑定事件"""
-        # 绑定Ctrl+S保存快捷键
+        # 绑定Ctrl+S保存快捷键（不区分大小写）
         self.root.bind("<Control-s>", lambda event: self.save_cards())
+        self.root.bind("<Control-S>", lambda event: self.save_cards())
         # 绑定F1帮助快捷键
         self.root.bind("<F1>", lambda event: self.show_help())
+        # 绑定Ctrl+D收藏快捷键（不区分大小写）
+        self.root.bind("<Control-d>", lambda event: self.toggle_selected_favorites())
+        self.root.bind("<Control-D>", lambda event: self.toggle_selected_favorites())
+        # 绑定Alt+D切换收藏视图快捷键（不区分大小写）
+        self.root.bind("<Alt-d>", lambda event: self.toggle_favorites_view())
+        self.root.bind("<Alt-D>", lambda event: self.toggle_favorites_view())
+        # 绑定Ctrl+A全选快捷键（不区分大小写）
+        self.root.bind("<Control-a>", lambda event: self.select_all_cards())
+        self.root.bind("<Control-A>", lambda event: self.select_all_cards())
+        # 绑定Ctrl+N新建卡片快捷键（不区分大小写）
+        self.root.bind("<Control-n>", lambda event: self.show_add_card())
+        self.root.bind("<Control-N>", lambda event: self.show_add_card())
+        # 绑定Ctrl+O编辑卡片快捷键（不区分大小写）
+        self.root.bind("<Control-o>", lambda event: self.edit_selected_card())
+        self.root.bind("<Control-O>", lambda event: self.edit_selected_card())
+        # 绑定Delete键删除选中卡片
+        self.root.bind("<Delete>", lambda event: self.delete_selected_card())
         
         # 绑定窗口大小变化事件
         self.root.bind('<Configure>', self.on_window_configure)
@@ -806,7 +844,7 @@ class MainWindow:
         # 绑定Ctrl+左键点击事件（新增）
         self.card_tree.bind('<Control-Button-1>', self.on_treeview_ctrl_click)
         # 绑定Shift+左键点击事件（新增）
-        self.card_tree.bind('<Shift-Button-1>', self.on_treeview_ctrl_click)
+        self.card_tree.bind('<Shift-Button-1>', self.on_treeview_shift_click)
         # 绑定选中变化事件（新增）
         self.card_tree.bind('<<TreeviewSelect>>', self.on_treeview_select)
         
@@ -815,8 +853,6 @@ class MainWindow:
         
         # 创建右键菜单
         self.context_menu = tk.Menu(self.root, tearoff=0)
-        self.context_menu.add_command(label="编辑", command=self.edit_selected_card)
-        self.context_menu.add_command(label="删除", command=self.delete_selected_card)
         
         # 初始化拖拽选择相关变量
         self.drag_start_item = None
@@ -900,7 +936,10 @@ class MainWindow:
             self.card_tree.delete(item)
         
         # 获取卡片数据
-        cards = self.card_manager.get_all_cards()
+        if self.is_favorites_view:
+            cards = self.card_manager.get_favorite_cards()
+        else:
+            cards = self.card_manager.get_all_cards()
         
         # 根据当前排序字段和顺序排序
         reverse = self.sort_order == "desc"
@@ -929,19 +968,25 @@ class MainWindow:
         # 更新状态栏
         if hasattr(self, 'status_bar'):
             if len(cards) == 0:
-                # 空卡片时的友好提示
-                self.status_bar.config(text="暂无卡片数据，可通过「添加卡片」或「导入卡片」创建")
+                if self.is_favorites_view:
+                    self.status_bar.config(text="暂无收藏卡片")
+                else:
+                    # 空卡片时的友好提示
+                    self.status_bar.config(text="暂无卡片数据，可通过「添加卡片」或「导入卡片」创建")
             else:
-                # 有卡片时显示排序信息
-                sort_direction = "递减" if reverse else "递增"
-                field_names = {
-                    "keyword": "关键词",
-                    "definition": "释义",
-                    "source": "出处",
-                    "quote": "原文"
-                }
-                field_name = field_names.get(self.sort_column, "关键词")
-                self.status_bar.config(text=f"显示 {len(cards)} 张卡片 (按{field_name}{sort_direction}排序)")
+                if self.is_favorites_view:
+                    self.status_bar.config(text=f"显示 {len(cards)} 张收藏卡片")
+                else:
+                    # 有卡片时显示排序信息
+                    sort_direction = "递减" if reverse else "递增"
+                    field_names = {
+                        "keyword": "关键词",
+                        "definition": "释义",
+                        "source": "出处",
+                        "quote": "原文"
+                    }
+                    field_name = field_names.get(self.sort_column, "关键词")
+                    self.status_bar.config(text=f"显示 {len(cards)} 张卡片 (按{field_name}{sort_direction}排序)")
     
     def _update_sort_indicators(self):
         """更新列标题的排序指示器"""
@@ -964,8 +1009,13 @@ class MainWindow:
         self.card_tree.heading(self.sort_column, text=f"{field_name}{indicator}")
     
     def on_item_double_click(self, event):
-        """双击列表项事件处理"""
-        self.edit_selected_card()
+        """双击列表项事件处理 - 显示编辑窗口"""
+        selected_items = self.card_tree.selection()
+        if selected_items:
+            item = selected_items[0]
+            card_id = self.card_tree.item(item, "tags")[0]
+            # 显示编辑窗口
+            self.show_edit_card(card_id)
     
     def on_treeview_click(self, event):
         """Treeview点击事件处理（右键禁止自动选中）"""
@@ -985,7 +1035,35 @@ class MainWindow:
             item = self.card_tree.identify_row(event.y)
             if item:
                 # 检查是否是Ctrl或Shift组合键
-                if not (event.state & 0x0004) and not (event.state & 0x0001):
+                if event.state & 0x0004:  # Ctrl键
+                    # Ctrl+点击，切换选中状态
+                    if item in self.card_tree.selection():
+                        self.card_tree.selection_remove(item)
+                    else:
+                        self.card_tree.selection_add(item)
+                    self.card_tree.focus(item)
+                elif event.state & 0x0001:  # Shift键
+                    # Shift+点击，范围选择
+                    current_selection = self.card_tree.selection()
+                    if current_selection:
+                        # 获取所有项
+                        all_items = self.card_tree.get_children()
+                        try:
+                            # 找到第一个选中项和当前项的索引
+                            first_idx = all_items.index(current_selection[0])
+                            current_idx = all_items.index(item)
+                            
+                            # 选择从第一个选中项到当前项的所有项
+                            start = min(first_idx, current_idx)
+                            end = max(first_idx, current_idx)
+                            
+                            # 选择范围
+                            self.card_tree.selection_set(all_items[start:end+1])
+                            self.card_tree.focus(item)
+                        except ValueError:
+                            pass
+                else:
+                    # 普通点击，替换选择
                     self.card_tree.selection_set(item)
                     self.card_tree.focus(item)
                 
@@ -1010,6 +1088,37 @@ class MainWindow:
                 else:
                     self.card_tree.selection_add(item)
                 self.card_tree.focus(item)
+                # 阻止默认的选择行为
+                return "break"
+    
+    def on_treeview_shift_click(self, event):
+        """Treeview Shift+点击事件处理 - 范围选择"""
+        # 记录鼠标按键
+        self.last_mouse_button = event.num
+        
+        # Shift+点击，范围选择
+        region = self.card_tree.identify_region(event.x, event.y)
+        if region == "cell":
+            item = self.card_tree.identify_row(event.y)
+            if item:
+                current_selection = self.card_tree.selection()
+                if current_selection:
+                    # 获取所有项
+                    all_items = self.card_tree.get_children()
+                    try:
+                        # 找到第一个选中项和当前项的索引
+                        first_idx = all_items.index(current_selection[0])
+                        current_idx = all_items.index(item)
+                        
+                        # 选择从第一个选中项到当前项的所有项
+                        start = min(first_idx, current_idx)
+                        end = max(first_idx, current_idx)
+                        
+                        # 选择范围
+                        self.card_tree.selection_set(all_items[start:end+1])
+                        self.card_tree.focus(item)
+                    except ValueError:
+                        pass
                 # 阻止默认的选择行为
                 return "break"
     
@@ -1076,17 +1185,180 @@ class MainWindow:
         if item and item not in selected_items:
             # 支持右键点击时"追加选中"（和左键Ctrl+点击一致）
             self.card_tree.selection_add(item)
+            selected_items = self.card_tree.selection()
+        
+        # 分析选中项的收藏状态
+        has_favorites = False
+        has_non_favorites = False
+        
+        for item in selected_items:
+            card_id = self.card_tree.item(item, "tags")[0]
+            card = self.card_manager.get_card(card_id)
+            if card:
+                if card.get('is_favorite', False):
+                    has_favorites = True
+                else:
+                    has_non_favorites = True
+        
+        # 清空并重新构建右键菜单
+        self.context_menu.delete(0, tk.END)
+        
+        # 根据选择状态动态添加菜单项
+        if len(selected_items) == 1:
+            # 单选时显示编辑选项
+            self.context_menu.add_command(label="编辑  \tCtrl+O", command=self.edit_selected_card)
+        
+        # 收藏/取消收藏选项
+        if self.is_favorites_view:
+            # 在收藏视图中，显示"取消收藏"
+            # 多选时不显示分隔线，单选时如果已有编辑选项则显示分隔线
+            if len(selected_items) == 1:
+                try:
+                    if self.context_menu.index(tk.END) is not None and self.context_menu.index(tk.END) > 0:
+                        self.context_menu.add_separator()
+                except:
+                    pass
+            self.context_menu.add_command(label="取消收藏  \tCtrl+D", command=self.toggle_selected_favorites)
+        else:
+            # 在普通视图中，多选时总是显示"收藏"
+            if len(selected_items) > 1:
+                try:
+                    if self.context_menu.index(tk.END) is not None and self.context_menu.index(tk.END) > 0:
+                        self.context_menu.add_separator()
+                except:
+                    pass
+                self.context_menu.add_command(label="收藏  \tCtrl+D", command=self.toggle_selected_favorites)
+            else:
+                # 单选时根据状态显示
+                try:
+                    if self.context_menu.index(tk.END) is not None and self.context_menu.index(tk.END) > 0:
+                        self.context_menu.add_separator()
+                except:
+                    pass
+                if has_favorites:
+                    self.context_menu.add_command(label="取消收藏  \tCtrl+D", command=self.toggle_selected_favorites)
+                else:
+                    self.context_menu.add_command(label="收藏  \tCtrl+D", command=self.toggle_selected_favorites)
+        
+        # 删除选项始终显示
+        try:
+            if self.context_menu.index(tk.END) is not None and self.context_menu.index(tk.END) > 0:
+                self.context_menu.add_separator()
+        except:
+            pass
+        self.context_menu.add_command(label="删除  \tDel", command=self.delete_selected_card)
         
         # 显示菜单（位置微调，避免遮挡）
         self.context_menu.post(event.x_root + 10, event.y_root + 10)
     
     def edit_selected_card(self):
-        """编辑选中的卡片"""
+        """编辑选中的卡片 - 使用主界面编辑模式"""
         selected_items = self.card_tree.selection()
         if selected_items:
             item = selected_items[0]
             card_id = self.card_tree.item(item, "tags")[0]
-            self.show_edit_card(card_id)
+            # 切换到添加卡片视图并加载要编辑的卡片
+            self.show_add_card()
+            self.card_editor.load_card(card_id)
+    
+    def toggle_selected_favorites(self):
+        """切换选中卡片的收藏状态"""
+        selected_items = self.card_tree.selection()
+        if not selected_items:
+            return
+        
+        # 获取选中的卡片ID
+        card_ids = []
+        for item in selected_items:
+            card_id = self.card_tree.item(item, "tags")[0]
+            card_ids.append(card_id)
+        
+        # 批量切换收藏状态
+        results = self.card_manager.toggle_favorites(card_ids)
+        
+        # 根据操作结果显示提示
+        if len(results) == 1:
+            is_favorite = list(results.values())[0]
+            status = "已收藏" if is_favorite else "已取消收藏"
+            # 不显示弹窗，保持静默操作
+        else:
+            # 批量操作时统计
+            favorite_count = sum(1 for is_favorite in results.values() if is_favorite)
+            unfavorite_count = len(results) - favorite_count
+            if favorite_count > 0 and unfavorite_count == 0:
+                status = f"已收藏 {favorite_count} 张卡片"
+            elif unfavorite_count > 0 and favorite_count == 0:
+                status = f"已取消收藏 {unfavorite_count} 张卡片"
+            else:
+                status = f"已收藏 {favorite_count} 张，已取消收藏 {unfavorite_count} 张"
+        
+        # 更新状态栏
+        if hasattr(self, 'status_bar'):
+            self.status_bar.config(text=status)
+        
+        # 刷新列表视图以显示收藏状态
+        self.refresh_list_view()
+    
+    def toggle_favorites_view(self):
+        """切换收藏视图模式"""
+        self.is_favorites_view = not self.is_favorites_view
+        
+        # 更新文件菜单中的收藏选项文本
+        try:
+            if hasattr(self, 'file_menu') and hasattr(self, 'favorites_menu_index'):
+                # 使用entryconfigure更新菜单项的标签文本
+                if self.is_favorites_view:
+                    self.file_menu.entryconfigure(self.favorites_menu_index, label="全部卡片  \tAlt+D")
+                else:
+                    self.file_menu.entryconfigure(self.favorites_menu_index, label="收藏  \tAlt+D")
+        except Exception as e:
+            print(f"更新菜单标签时出错: {str(e)}")
+        
+        # 刷新列表视图
+        self.refresh_list_view()
+    
+    def select_all_cards(self):
+        """全选所有卡片"""
+        if hasattr(self, 'card_tree'):
+            # 清空当前选择
+            self.card_tree.selection_clear()
+            # 选择所有项
+            for item in self.card_tree.get_children():
+                self.card_tree.selection_add(item)
+    
+    def undo_action(self):
+        """撤销上一个操作"""
+        # 调用卡片管理器的撤销功能（用于撤销删除操作）
+        if hasattr(self, 'card_manager'):
+            success = self.card_manager.undo_last_action()
+            if success:
+                # 刷新列表视图
+                self.refresh_list_view()
+                # 更新状态栏提示
+                if hasattr(self, 'status_bar'):
+                    self.status_bar.config(text="已撤销删除操作")
+            else:
+                # 没有可撤销的操作时，显示提示
+                if hasattr(self, 'status_bar'):
+                    self.status_bar.config(text="没有可撤销的操作")
+        
+        # 更新状态栏
+        if hasattr(self, 'status_bar'):
+            if self.is_favorites_view:
+                favorite_cards = self.card_manager.get_favorite_cards()
+                self.status_bar.config(text=f"显示 {len(favorite_cards)} 张收藏卡片")
+            else:
+                # 恢复到正常视图的状态显示
+                cards = self.card_manager.get_all_cards()
+                sort_direction = "递减" if self.sort_order == "desc" else "递增"
+                field_names = {
+                    "keyword": "关键词",
+                    "definition": "释义",
+                    "source": "出处",
+                    "quote": "原文"
+                }
+                field_name = field_names.get(self.sort_column, "关键词")
+                self.status_bar.config(text=f"显示 {len(cards)} 张卡片 (按{field_name}{sort_direction}排序)")
     
     def delete_selected_card(self):
         """删除选中的卡片（批量支持）"""
@@ -1131,18 +1403,18 @@ class MainWindow:
             update_window = tk.Toplevel(self.root)
             update_window.title("更新日志")
             update_window.geometry("800x690")
-            update_window.resizable(True, True)
+            update_window.resizable(False, False)  # 不可调整窗口大小
             
             # 设置窗口图标
             if hasattr(self.app, '_set_window_icon'):
                 self.app._set_window_icon(update_window)
             
-            # 居中显示
+            # 居中显示（考虑主窗口位置）
             update_window.update_idletasks()
             width = update_window.winfo_width()
             height = update_window.winfo_height()
-            x = (self.root.winfo_width() // 2) - (width // 2)
-            y = (self.root.winfo_height() // 2) - (height // 2)
+            x = (self.root.winfo_width() // 2) - (width // 2) + self.root.winfo_x()
+            y = (self.root.winfo_height() // 2) - (height // 2) + self.root.winfo_y()
             update_window.geometry('+{}+{}'.format(x, y))
             
             # 创建主框架
@@ -1357,8 +1629,53 @@ class MainWindow:
                 height = max(height, min_height)
                 self.root.geometry(f"{width}x{height}")
     
+    def show_tooltip(self, event):
+        """显示工具提示"""
+        widget = event.widget
+        if hasattr(widget, '_tooltip'):
+            # 创建工具提示窗口
+            self.tooltip = tk.Toplevel(self.root)
+            self.tooltip.wm_overrideredirect(True)  # 无边框窗口
+            self.tooltip.wm_geometry(f"+{event.x_root + 10}+{event.y_root - 30}")
+            
+            # 创建标签显示提示文本
+            label = ttk.Label(
+                self.tooltip,
+                text=widget._tooltip,
+                background="#FFFFE0",
+                foreground="#000000",
+                relief="solid",
+                borderwidth=1,
+                padding=(5, 2)
+            )
+            label.pack()
+    
+    def hide_tooltip(self):
+        """隐藏工具提示"""
+        if hasattr(self, 'tooltip') and self.tooltip:
+            self.tooltip.destroy()
+            delattr(self, 'tooltip')
+    
     def on_window_close(self):
         """窗口关闭时的回调"""
+        # 检查是否有未安装的更新
+        if hasattr(self.app, 'update_manager') and self.app.update_manager:
+            if self.app.update_manager.has_pending_update:
+                # 显示更新提示弹窗
+                result = messagebox.askyesnocancel(
+                    "发现新版本",
+                    "有新版本可用，是否立即安装更新？\n\n选择'是'立即安装，选择'否'稍后安装，选择'取消'取消操作。",
+                    icon=messagebox.QUESTION
+                )
+                
+                if result is None:  # 取消
+                    return
+                elif result:  # 立即安装
+                    self.app.update_manager.install_update()
+                    return
+                else:  # 稍后安装
+                    pass  # 继续关闭流程
+        
         # 保存窗口位置和大小
         if self.settings_manager:
             x, y = self.root.winfo_x(), self.root.winfo_y()

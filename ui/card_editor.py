@@ -31,8 +31,13 @@ class CardEditor:
         # 当前编辑的卡片ID
         self.current_card_id = None
         
+        # 从设置管理器加载上次使用的出处
+        self.last_source = self._load_last_source()
+        
         # 创建编辑器界面
         self.create_editor()
+        
+
     
     def create_editor(self):
         """创建编辑器界面"""
@@ -146,6 +151,21 @@ class CardEditor:
             style="Accent.TButton"
         )
         save_button.pack(side=tk.RIGHT)
+        
+        # 创建底部说明文字
+        bottom_frame = ttk.Frame(self.editor_frame)
+        bottom_frame.pack(fill=tk.X, pady=(15, 0))
+        
+        self.status_var = tk.StringVar()
+        self.status_var.set("添加新的卡片（enter换行）")
+        
+        status_label = ttk.Label(
+            bottom_frame,
+            textvariable=self.status_var,
+            font=("SimHei", 10),
+            foreground="#666666"
+        )
+        status_label.pack(anchor=tk.W)
     
     def create_form_field(self, parent, label_text, field_name, placeholder, row):
         """
@@ -184,6 +204,13 @@ class CardEditor:
         field_entry.bind("<FocusIn>", lambda event, var=field_var, txt=placeholder: self.on_entry_focus_in(event, var, txt))
         field_entry.bind("<FocusOut>", lambda event, var=field_var, txt=placeholder: self.on_entry_focus_out(event, var, txt))
         
+        # 添加回车键导航功能
+        field_entry.bind("<Return>", lambda event, name=field_name: self.on_entry_return(event, name))
+        
+        # 为每个输入框单独绑定Ctrl+A全选快捷键（不区分大小写）
+        field_entry.bind("<Control-a>", self.on_ctrl_a)
+        field_entry.bind("<Control-A>", self.on_ctrl_a)
+        
         # 设置默认占位符文本
         field_var.set(placeholder)
         field_entry.config(foreground="#999999")
@@ -199,6 +226,191 @@ class CardEditor:
         if not var.get():
             var.set(placeholder)
             event.widget.config(foreground="#999999")
+    
+    def on_entry_return(self, event, field_name):
+        """处理输入框的回车键事件，实现导航功能"""
+        try:
+            # 定义输入框的导航顺序
+            navigation_order = ['keyword', 'definition', 'source', 'quote']
+            
+            # 找到当前字段在导航顺序中的索引
+            if field_name in navigation_order:
+                current_index = navigation_order.index(field_name)
+                
+                # 特殊处理：从释义到出处
+                if field_name == 'definition' and current_index + 1 < len(navigation_order):
+                    next_field = navigation_order[current_index + 1]  # source
+                    next_entry = getattr(self, f"{next_field}_entry", None)
+                    next_var = getattr(self, f"{next_field}_var", None)
+                    
+                    if next_entry and next_var:
+                        # 检查是否启用了自动填充出处（简化版本，直接检查设置）
+                        auto_fill_source = self.get_auto_fill_setting()
+                        
+                        # 如果启用了自动填充且有上次的出处
+                        if auto_fill_source and self.last_source:
+                            placeholder = self.get_placeholder_for_field(next_field)
+                            current_value = next_var.get()
+                            
+                            print(f"自动填充检查: 启用={auto_fill_source}, 上次出处='{self.last_source}', 当前值='{current_value}', 占位符='{placeholder}'")
+                            
+                            if current_value == placeholder or not current_value:
+                                # 填充上次的出处
+                                next_var.set(self.last_source)
+                                next_entry.config(foreground="#000000")
+                                # 全选内容
+                                next_entry.select_range(0, tk.END)
+                                next_entry.icursor(tk.END)
+                                print("已自动填充出处并全选")
+                        else:
+                            # 正常清除占位符
+                            placeholder = self.get_placeholder_for_field(next_field)
+                            if next_var.get() == placeholder:
+                                next_var.set("")
+                                next_entry.config(foreground="#000000")
+                        
+                        # 设置焦点
+                        next_entry.focus_set()
+                # 其他字段的正常导航
+                elif current_index < len(navigation_order) - 1:
+                    next_field = navigation_order[current_index + 1]
+                    next_entry = getattr(self, f"{next_field}_entry", None)
+                    if next_entry:
+                        # 清除占位符文本
+                        next_var = getattr(self, f"{next_field}_var", None)
+                        placeholder = self.get_placeholder_for_field(next_field)
+                        if next_var and next_var.get() == placeholder:
+                            next_var.set("")
+                            next_entry.config(foreground="#000000")
+                        # 设置焦点
+                        next_entry.focus_set()
+                else:
+                    # 如果是最后一个字段（原文引用），直接保存
+                    self.save_card()
+        except Exception as e:
+            print(f"导航错误: {str(e)}")
+        
+        # 阻止默认的回车键行为
+        return "break"
+    
+    def get_placeholder_for_field(self, field_name):
+        """获取字段对应的占位符文本"""
+        placeholders = {
+            'keyword': '请输入古文中的关键词或生僻字',
+            'definition': '请输入关键词的现代解释',
+            'source': '请输入引用的古籍名称，如《论语》',
+            'quote': '请输入包含关键词的原文句子'
+        }
+        return placeholders.get(field_name, '')
+    
+    def get_auto_fill_setting(self):
+        """获取自动填充设置"""
+        try:
+            # 首先尝试从主窗口获取设置管理器
+            if hasattr(self.main_window, 'app') and hasattr(self.main_window.app, 'settings_manager'):
+                return self.main_window.app.settings_manager.get_setting("editor", "auto_fill_source", False)
+            
+            # 如果主窗口没有app属性，尝试直接从主窗口获取设置
+            elif hasattr(self.main_window, 'settings_manager'):
+                return self.main_window.settings_manager.get_setting("editor", "auto_fill_source", False)
+            
+            # 如果都不行，尝试从卡片管理器获取
+            elif hasattr(self.card_manager, 'settings_manager'):
+                return self.card_manager.settings_manager.get_setting("editor", "auto_fill_source", False)
+        except Exception as e:
+            print(f"获取自动填充设置错误: {str(e)}")
+        
+        # 默认返回False
+        return False
+    
+    def _load_last_source(self):
+        """从设置管理器加载上次使用的出处"""
+        try:
+            # 首先尝试从主窗口获取设置管理器
+            if hasattr(self.main_window, 'app') and hasattr(self.main_window.app, 'settings_manager'):
+                return self.main_window.app.settings_manager.get_setting("editor", "last_source", "")
+            
+            # 如果主窗口没有app属性，尝试直接从主窗口获取设置
+            elif hasattr(self.main_window, 'settings_manager'):
+                return self.main_window.settings_manager.get_setting("editor", "last_source", "")
+            
+            # 如果都不行，尝试从卡片管理器获取
+            elif hasattr(self.card_manager, 'settings_manager'):
+                return self.card_manager.settings_manager.get_setting("editor", "last_source", "")
+        except Exception as e:
+            print(f"加载上次出处错误: {str(e)}")
+        
+        # 默认返回空字符串
+        return ""
+    
+    def _save_last_source(self, source):
+        """保存上次使用的出处到设置管理器"""
+        try:
+            # 首先尝试从主窗口获取设置管理器
+            if hasattr(self.main_window, 'app') and hasattr(self.main_window.app, 'settings_manager'):
+                self.main_window.app.settings_manager.set_setting("editor", "last_source", source)
+                self.main_window.app.settings_manager.save_preferences()
+                return True
+            
+            # 如果主窗口没有app属性，尝试直接从主窗口获取设置
+            elif hasattr(self.main_window, 'settings_manager'):
+                self.main_window.settings_manager.set_setting("editor", "last_source", source)
+                self.main_window.settings_manager.save_preferences()
+                return True
+            
+            # 如果都不行，尝试从卡片管理器获取
+            elif hasattr(self.card_manager, 'settings_manager'):
+                self.card_manager.settings_manager.set_setting("editor", "last_source", source)
+                self.card_manager.settings_manager.save_preferences()
+                return True
+        except Exception as e:
+            print(f"保存上次出处错误: {str(e)}")
+        
+        return False
+    
+    def on_ctrl_a(self, event):
+        """处理Ctrl+A全选快捷键"""
+        # 获取当前焦点所在的输入框
+        focused_widget = self.parent.focus_get()
+        if focused_widget and hasattr(focused_widget, 'select_range'):
+            # 全选输入框内容
+            focused_widget.select_range(0, tk.END)
+            focused_widget.icursor(tk.END)
+            # 阻止默认行为
+            return "break"
+        return None
+    
+    def on_field_change(self, var, field_name):
+        """
+        输入框内容变化事件处理
+        
+        Args:
+            var: StringVar对象
+            field_name: 字段名称
+        """
+        # 获取当前值
+        current_value = var.get()
+        
+        # 获取占位符文本
+        placeholders = {
+            'keyword': '请输入古文中的关键词或生僻字',
+            'definition': '请输入关键词的现代解释',
+            'source': '请输入引用的古籍名称，如《论语》',
+            'quote': '请输入包含关键词的原文句子'
+        }
+        
+        # 如果是占位符文本，不执行任何操作
+        if field_name in placeholders and current_value == placeholders[field_name]:
+            return
+    
+    def on_text_change(self):
+        """文本框内容变化事件处理"""
+        # 文本框变化时不需要特殊处理
+        pass
+    
+
+    
+
     
     def load_card(self, card_id: str):
         """
@@ -230,9 +442,11 @@ class CardEditor:
         # 确保文本框显示正常颜色
         for field_name in ['keyword', 'definition', 'source', 'quote']:
             field_var = getattr(self, f"{field_name}_var")
-            field_entry = self.editor_frame.nametowidget(f".!entry{field_name}")
-            # 直接设置为正常颜色，因为这是从数据库加载的实际内容
-            field_entry.config(foreground="#000000")
+            # 使用之前保存的输入框引用
+            field_entry = getattr(self, f"{field_name}_entry", None)
+            if field_entry:
+                # 直接设置为正常颜色，因为这是从数据库加载的实际内容
+                field_entry.config(foreground="#000000")
     
     def reset_form(self):
         """重置表单"""
@@ -258,6 +472,34 @@ class CardEditor:
             field_entry.config(foreground="#999999")
         
         self.notes_text.delete(1.0, tk.END)
+    
+    def focus_first_field(self):
+        """聚焦到第一个输入字段（关键词字段）"""
+        try:
+            keyword_entry = getattr(self, "keyword_entry", None)
+            if keyword_entry:
+                # 给界面一点时间更新，然后聚焦
+                self.parent.after(100, lambda: self.activate_keyword_field())
+        except Exception as e:
+            print(f"聚焦到第一个字段时出错: {str(e)}")
+    
+    def activate_keyword_field(self):
+        """激活关键词字段并清除占位符"""
+        try:
+            keyword_entry = getattr(self, "keyword_entry", None)
+            keyword_var = getattr(self, "keyword_var", None)
+            
+            if keyword_entry and keyword_var:
+                # 聚焦到关键词输入框
+                keyword_entry.focus_set()
+                
+                # 如果当前是占位符文本，则清除
+                placeholder = '请输入古文中的关键词或生僻字'
+                if keyword_var.get() == placeholder:
+                    keyword_var.set("")
+                    keyword_entry.config(foreground="#000000")
+        except Exception as e:
+            print(f"激活关键词字段时出错: {str(e)}")
     
     def validate_form(self) -> bool:
         """
@@ -341,6 +583,10 @@ class CardEditor:
             if self.current_card_id:
                 # 更新卡片
                 if self.card_manager.update_card(self.current_card_id, card_data):
+                    # 保存上次使用的出处到设置管理器
+                    if card_data.get('source'):
+                        self.last_source = card_data['source']
+                        self._save_last_source(card_data['source'])
                     # 不显示成功弹窗，直接返回概览页面
                     self.reset_form()
                     self.main_window.show_overview()
@@ -350,6 +596,10 @@ class CardEditor:
                 # 添加新卡片
                 card_id = self.card_manager.add_card(card_data)
                 if card_id:
+                    # 保存上次使用的出处到设置管理器
+                    if card_data.get('source'):
+                        self.last_source = card_data['source']
+                        self._save_last_source(card_data['source'])
                     # 不显示成功弹窗，直接返回概览页面
                     self.reset_form()
                     self.main_window.show_overview()
@@ -359,6 +609,7 @@ class CardEditor:
             messagebox.showerror("错误", f"保存卡片失败: {str(e)}")
     
     def cancel_edit(self):
+
         """取消编辑"""
         # 询问是否放弃更改
         if self.has_form_changes():

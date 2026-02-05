@@ -49,7 +49,7 @@ class SearchPanel:
         ttk.Label(
             search_box_frame,
             text="搜索:",
-            font=("SimHei", 12)
+            font=("SimHei", 16)
         ).pack(side=tk.LEFT, padx=(0, 10))
         
         self.search_var = tk.StringVar()
@@ -57,7 +57,7 @@ class SearchPanel:
             search_box_frame,
             textvariable=self.search_var,
             width=50,
-            font=("SimHei", 12)
+            font=("SimHei", 16)
         )
         self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
         
@@ -70,13 +70,13 @@ class SearchPanel:
         )
         search_button.pack(side=tk.LEFT, padx=(0, 10))
         
-        # 清除按钮
-        clear_button = ttk.Button(
+        # 编辑选中按钮（放在原来清除按钮的位置）
+        edit_button = ttk.Button(
             search_box_frame,
-            text="清除",
-            command=self.clear_search
+            text="编辑选中",
+            command=self.edit_selected_result
         )
-        clear_button.pack(side=tk.LEFT)
+        edit_button.pack(side=tk.LEFT)
         
         # 搜索选项框架
         options_frame = ttk.Frame(self.search_frame)
@@ -86,7 +86,7 @@ class SearchPanel:
         ttk.Label(
             options_frame,
             text="搜索范围:",
-            font=("SimHei", 12)
+            font=("SimHei", 16)
         ).grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
         
         # 创建搜索范围复选框
@@ -130,7 +130,7 @@ class SearchPanel:
         ttk.Label(
             options_frame,
             text="搜索选项:",
-            font=("SimHei", 12)
+            font=("SimHei", 16)
         ).grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=(10, 0))
         
         # 区分大小写
@@ -177,7 +177,7 @@ class SearchPanel:
             yscrollcommand=scrollbar.set,
             width=80,
             height=15,
-            font=("SimHei", 10)
+            font=("SimHei", 16)
         )
         self.results_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -190,22 +190,15 @@ class SearchPanel:
         
         # 绑定搜索框事件
         self.search_entry.bind('<Return>', lambda event: self.perform_search())
+        # 绑定点击事件，自动选中所有内容
+        self.search_entry.bind('<Button-1>', self.on_search_entry_click)
+        # 绑定Ctrl+A和Ctrl+a全选功能
+        self.search_entry.bind('<Control-a>', self.on_select_all)
+        self.search_entry.bind('<Control-A>', self.on_select_all)
         
-        # 结果操作按钮框架
+        # 结果操作按钮框架（保留但为空，避免布局问题）
         buttons_frame = ttk.Frame(results_frame)
         buttons_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        ttk.Button(
-            buttons_frame,
-            text="查看详情",
-            command=self.view_selected_result
-        ).pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(
-            buttons_frame,
-            text="编辑选中",
-            command=self.edit_selected_result
-        ).pack(side=tk.LEFT, padx=(0, 10))
     
     def perform_search(self):
         """执行搜索"""
@@ -309,7 +302,7 @@ class SearchPanel:
             pass
     
     def on_result_double_click(self, event):
-        """结果双击事件处理"""
+        """结果双击事件处理 - 显示卡片详情"""
         # 获取选中的索引
         selection = self.results_listbox.curselection()
         if not selection:
@@ -319,11 +312,11 @@ class SearchPanel:
         index = selection[0]
         if index < len(self.search_results):
             card = self.search_results[index]
-            # 查看卡片详情
+            # 显示卡片详情
             self.view_card_detail(card)
     
     def view_selected_result(self):
-        """查看选中的结果"""
+        """查看选中的结果 - 显示卡片详情"""
         # 获取选中的索引
         selection = self.results_listbox.curselection()
         if not selection:
@@ -333,7 +326,7 @@ class SearchPanel:
         index = selection[0]
         if index < len(self.search_results):
             card = self.search_results[index]
-            # 查看卡片详情
+            # 显示卡片详情
             self.view_card_detail(card)
     
     def edit_selected_result(self):
@@ -378,7 +371,7 @@ class SearchPanel:
         ttk.Label(
             detail_frame,
             text=card['keyword'],
-            font=("SimHei", 12),
+            font=("SimHei", 16),
             background=self.colors['bg']
         ).grid(row=0, column=1, sticky=tk.W, pady=(0, 5))
         
@@ -393,7 +386,7 @@ class SearchPanel:
         ttk.Label(
             detail_frame,
             text=card['definition'],
-            font=("SimHei", 12),
+            font=("SimHei", 16),
             background=self.colors['bg']
         ).grid(row=1, column=1, sticky=tk.W, pady=(0, 5))
         
@@ -408,7 +401,7 @@ class SearchPanel:
         ttk.Label(
             detail_frame,
             text=card['source'],
-            font=("SimHei", 12),
+            font=("SimHei", 16),
             background=self.colors['bg']
         ).grid(row=2, column=1, sticky=tk.W, pady=(0, 5))
         
@@ -423,7 +416,7 @@ class SearchPanel:
         ttk.Label(
             detail_frame,
             text=card['quote'],
-            font=("SimHei", 12),
+            font=("SimHei", 16),
             background=self.colors['bg'],
             wraplength=400
         ).grid(row=3, column=1, sticky=tk.W, pady=(0, 5))
@@ -440,7 +433,7 @@ class SearchPanel:
             detail_frame,
             width=50,
             height=6,
-            font=("SimHei", 12),
+            font=("SimHei", 16),
             wrap=tk.WORD
         )
         notes_text.grid(row=4, column=1, sticky=tk.NSEW, pady=(0, 5))
@@ -487,6 +480,17 @@ class SearchPanel:
         # 切换到编辑视图
         self.main_window.show_add_card()
         self.main_window.card_editor.load_card(card_id)
+    
+    def on_search_entry_click(self, event):
+        """搜索框点击事件 - 自动选中所有内容"""
+        # 使用after确保在默认的点击处理完成后再选中
+        self.search_entry.after(10, lambda: self.search_entry.select_range(0, tk.END))
+    
+    def on_select_all(self, event):
+        """全选功能 - 支持Ctrl+A和Ctrl+a"""
+        self.search_entry.select_range(0, tk.END)
+        # 阻止事件继续传播
+        return "break"
     
     def clear_search(self):
         """清除搜索"""
