@@ -403,15 +403,6 @@ class CardManager:
         """
         return [card for card in self.cards if card.get('is_favorite', False)]
     
-    def get_all_cards(self) -> List[Dict[str, Any]]:
-        """
-        获取所有卡片
-        
-        Returns:
-            List[Dict[str, Any]]: 所有卡片列表
-        """
-        return self.cards
-    
     def undo_last_action(self) -> bool:
         """
         撤销上一个操作（目前支持撤销删除操作）
@@ -456,44 +447,35 @@ class CardManager:
         return len(self.undo_stack) > 0
     
     def sort_cards(self) -> List[Dict[str, Any]]:
-        """
-        按关键词字母顺序排序卡片
-        
-        Returns:
-            List[Dict[str, Any]]: 排序后的卡片列表
-        """
+        """按关键词字母顺序排序卡片"""
         if PINYIN_AVAILABLE:
-            # 使用pypinyin进行中文拼音排序
-            return sorted(self.cards, key=lambda x: lazy_pinyin(x['keyword'].lower()))
+            # 使用pypinyin进行中文拼音排序，安全处理 None 或缺失的 keyword
+            return sorted(self.cards, key=lambda x: lazy_pinyin((x.get('keyword') or '').lower()))
         else:
-            # 使用Python内置排序（可能不够准确）
-            return sorted(self.cards, key=lambda x: x['keyword'].lower())
+            # 使用Python内置排序
+            return sorted(self.cards, key=lambda x: (x.get('keyword') or '').lower())
     
     def search_cards(self, query: str) -> List[Dict[str, Any]]:
-        """
-        搜索卡片
-        
-        Args:
-            query: 搜索关键词
-        
-        Returns:
-            List[Dict[str, Any]]: 搜索结果列表
-        """
+        """搜索卡片"""
         if not query:
             return self.cards
-        
+
         query = query.lower()
         results = []
-        
+
         for card in self.cards:
-            # 在多个字段中搜索
-            if (query in card['keyword'].lower() or
-                query in card['definition'].lower() or
-                query in card['source'].lower() or
-                query in card['quote'].lower() or
-                query in card['notes'].lower()):
+            # 安全获取字段值，None 转为空字符串
+            keyword = (card.get('keyword') or '').lower()
+            definition = (card.get('definition') or '').lower()
+            source = (card.get('source') or '').lower()
+            quote = (card.get('quote') or '').lower()
+            notes = (card.get('notes') or '').lower()
+
+            if (query in keyword or query in definition or
+                query in source or query in quote or
+                query in notes):
                 results.append(card)
-        
+
         return results
     
     def save_cards(self):
@@ -1050,25 +1032,84 @@ class CardManager:
             
             else:
                 print("无效的选择，请重新输入")
+            
+    def get_all_sources(self) -> List[Dict[str, Any]]:
+        """
+        获取所有不重复的出处列表，统计每个出处的卡片数量
+        空出处统一归为「未分类」
+        Returns:
+            List[Dict]: 格式 [{"source_name": "出处名称", "card_count": 卡片数量}, ...]
+        """
+        source_count = {}
         
-        # 添加导入的卡片
-        stats['total'] = len(cards)
+        for card in self.cards:
+            source = card.get('source', '').strip()
+            # 空出处归为未分类
+            source_name = source if source else "未分类"
+            
+            if source_name in source_count:
+                source_count[source_name] += 1
+            else:
+                source_count[source_name] = 1
         
-        for card_data in cards:
-            try:
-                card_id = self.add_card(card_data, allow_duplicates)
-                
-                # 检查是新增还是合并
-                if any(card['id'] == card_id for card in self.cards[-len(cards):]):
-                    stats['added'] += 1
-                else:
-                    stats['merged'] += 1
-            except Exception as e:
-                print(f"导入卡片失败: {str(e)}")
-                stats['failed'] += 1
+        # 转为列表，按卡片数量降序排序
+        source_list = [
+            {"source_name": name, "card_count": count}
+            for name, count in source_count.items()
+        ]
         
-        return stats
+        # 排序：先按数量降序，再按名称拼音升序
+        try:
+            from pypinyin import lazy_pinyin
+            source_list.sort(key=lambda x: (-x["card_count"], lazy_pinyin(x["source_name"])))
+        except ImportError:
+            source_list.sort(key=lambda x: (-x["card_count"], x["source_name"]))
+        
+        return source_list
     
+    def get_cards_by_source(self, source_name: str) -> List[Dict[str, Any]]:
+        """
+        根据出处名称，获取该出处下的所有卡片
+        Args:
+            source_name: 出处名称（「未分类」对应空出处）
+        Returns:
+            List[Dict]: 该出处下的卡片列表
+        """
+        cards = []
+        for card in self.cards:
+            source = card.get('source', '').strip()
+            current_source = source if source else "未分类"
+            
+            if current_source == source_name:
+                cards.append(card)
+        
+        # 按关键词拼音排序（和主界面一致）
+        try:
+            from pypinyin import lazy_pinyin
+            cards.sort(key=lambda x: lazy_pinyin(x['keyword']))
+        except ImportError:
+            cards.sort(key=lambda x: x['keyword'])
+        
+        return cards
+    
+    def get_source_card_count(self, source_name: str) -> int:
+        """
+        获取指定出处的卡片数量
+        Args:
+            source_name: 出处名称
+        Returns:
+            int: 卡片数量
+        """
+        count = 0
+        for card in self.cards:
+            source = card.get('source', '').strip()
+            current_source = source if source else "未分类"
+            
+            if current_source == source_name:
+                count += 1
+        return count
+
+
     def export_cards_to_text(self, group_by_keyword: bool = False) -> str:
         """
         导出卡片为文本格式

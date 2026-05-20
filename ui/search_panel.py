@@ -1,511 +1,264 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-搜索面板类，负责卡片的搜索功能
+搜索面板类，负责卡片搜索功能
+搜索结果直接显示在面板下方
 """
-
 import tkinter as tk
-from tkinter import ttk, font
-import re
-from typing import List, Dict, Any
+from tkinter import ttk, messagebox
 
 class SearchPanel:
-    """搜索面板类"""
-    
+    """搜索面板类（内置搜索结果列表）"""
     def __init__(self, parent, card_manager, main_window):
         """
         初始化搜索面板
-        
+
         Args:
-            parent: 父窗口组件
-            card_manager: 卡片管理器实例
-            main_window: 主窗口实例
+            parent: 父容器（MainWindow的search视图）
+            card_manager: 卡片管理器实例（用于查询卡片）
+            main_window: 主窗口实例（用于编辑/删除等操作）
         """
         self.parent = parent
         self.card_manager = card_manager
         self.main_window = main_window
-        
-        # 设置主题颜色
-        self.colors = main_window.colors
-        
-        # 搜索结果
-        self.search_results = []
-        
-        # 创建搜索面板界面
-        self.create_search_panel()
-    
-    def create_search_panel(self):
-        """创建搜索面板界面"""
-        # 创建主框架
-        self.search_frame = ttk.Frame(self.parent)
-        self.search_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-        
-        # 创建搜索框框架
-        search_box_frame = ttk.Frame(self.search_frame)
-        search_box_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        # 搜索输入框
-        ttk.Label(
-            search_box_frame,
-            text="搜索:",
-            font=("SimHei", 16)
-        ).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.search_var = tk.StringVar()
-        self.search_entry = ttk.Entry(
-            search_box_frame,
-            textvariable=self.search_var,
-            width=50,
-            font=("SimHei", 16)
+
+        # 复用主窗口字体配置
+        if hasattr(main_window, 'get_font'):
+            self.font = main_window.get_font
+        else:
+            self.font = lambda size=12, bold=False: ("Microsoft YaHei", size, "bold" if bold else "normal")
+
+        # 当前搜索结果（卡片列表）
+        self.current_results = []
+
+        self.create_search_ui()  # 构建搜索UI
+
+    def create_search_ui(self):
+        """创建搜索面板UI组件（包含搜索框和结果列表）"""
+        # 主框架（填充父容器）
+        search_frame = ttk.Frame(self.parent, padding="20")
+        search_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 搜索标题
+        title_label = ttk.Label(
+            search_frame,
+            text="卡片搜索",
+            font=self.font(16, bold=True)
         )
-        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        
+        title_label.pack(anchor=tk.W, pady=(0, 15))
+
+        # 搜索输入区
+        input_frame = ttk.Frame(search_frame)
+        input_frame.pack(fill=tk.X, pady=(0, 20))
+
+        ttk.Label(
+            input_frame,
+            text="关键词：",
+            font=self.font(13)
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        # 搜索输入框
+        self.search_entry = ttk.Entry(
+            input_frame,
+            width=50,
+            font=self.font(13)
+        )
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.search_entry.bind("<Return>", lambda e: self.do_search())  # 回车触发搜索
+
         # 搜索按钮
-        search_button = ttk.Button(
-            search_box_frame,
+        search_btn = ttk.Button(
+            input_frame,
             text="搜索",
-            command=self.perform_search,
+            command=self.do_search,
             style="Accent.TButton"
         )
-        search_button.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # 编辑选中按钮（放在原来清除按钮的位置）
-        edit_button = ttk.Button(
-            search_box_frame,
-            text="编辑选中",
-            command=self.edit_selected_result
+        search_btn.pack(side=tk.LEFT, padx=(10, 0))
+
+        # 结果提示标签（放在列表上方）
+        self.result_label = ttk.Label(
+            search_frame,
+            text="请输入关键词搜索（支持关键词、释义、出处、原文模糊匹配）",
+            font=self.font(13)
         )
-        edit_button.pack(side=tk.LEFT)
-        
-        # 搜索选项框架
-        options_frame = ttk.Frame(self.search_frame)
-        options_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        # 搜索范围选项
-        ttk.Label(
-            options_frame,
-            text="搜索范围:",
-            font=("SimHei", 16)
-        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        
-        # 创建搜索范围复选框
-        self.search_in_keyword = tk.BooleanVar(value=True)
-        self.search_in_definition = tk.BooleanVar(value=True)
-        self.search_in_source = tk.BooleanVar(value=True)
-        self.search_in_quote = tk.BooleanVar(value=True)
-        self.search_in_notes = tk.BooleanVar(value=True)
-        
-        ttk.Checkbutton(
-            options_frame,
-            text="关键词",
-            variable=self.search_in_keyword
-        ).grid(row=0, column=1, sticky=tk.W, padx=(0, 10))
-        
-        ttk.Checkbutton(
-            options_frame,
-            text="释义",
-            variable=self.search_in_definition
-        ).grid(row=0, column=2, sticky=tk.W, padx=(0, 10))
-        
-        ttk.Checkbutton(
-            options_frame,
-            text="出处",
-            variable=self.search_in_source
-        ).grid(row=0, column=3, sticky=tk.W, padx=(0, 10))
-        
-        ttk.Checkbutton(
-            options_frame,
-            text="原文",
-            variable=self.search_in_quote
-        ).grid(row=0, column=4, sticky=tk.W, padx=(0, 10))
-        
-        ttk.Checkbutton(
-            options_frame,
-            text="注释",
-            variable=self.search_in_notes
-        ).grid(row=0, column=5, sticky=tk.W, padx=(0, 10))
-        
-        # 搜索选项
-        ttk.Label(
-            options_frame,
-            text="搜索选项:",
-            font=("SimHei", 16)
-        ).grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=(10, 0))
-        
-        # 区分大小写
-        self.case_sensitive = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            options_frame,
-            text="区分大小写",
-            variable=self.case_sensitive
-        ).grid(row=1, column=1, sticky=tk.W, padx=(0, 10), pady=(10, 0))
-        
-        # 正则表达式
-        self.use_regex = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            options_frame,
-            text="使用正则表达式",
-            variable=self.use_regex
-        ).grid(row=1, column=2, sticky=tk.W, padx=(0, 10), pady=(10, 0))
-        
-        # 搜索结果框架
-        results_frame = ttk.Frame(self.search_frame)
-        results_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 结果标题
-        self.results_title_var = tk.StringVar()
-        self.results_title_var.set("搜索结果")
-        
-        ttk.Label(
-            results_frame,
-            textvariable=self.results_title_var,
-            font=("SimHei", 12, "bold")
-        ).pack(anchor=tk.W, pady=(0, 10))
-        
-        # 结果列表框架
-        list_frame = ttk.Frame(results_frame)
+        self.result_label.pack(anchor=tk.W, pady=(0, 10))
+
+        # ---------- 搜索结果列表（Treeview）----------
+        list_frame = ttk.Frame(search_frame)
         list_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         # 创建滚动条
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # 创建结果列表
-        self.results_listbox = tk.Listbox(
+        y_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 创建表格
+        columns = ("keyword", "definition", "source", "quote")
+        self.result_tree = ttk.Treeview(
             list_frame,
-            yscrollcommand=scrollbar.set,
-            width=80,
-            height=15,
-            font=("SimHei", 16)
+            columns=columns,
+            show="headings",
+            selectmode="extended",
+            yscrollcommand=y_scrollbar.set
         )
-        self.results_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        # 绑定滚动条
-        scrollbar.config(command=self.results_listbox.yview)
-        
-        # 绑定列表框事件
-        self.results_listbox.bind('<<ListboxSelect>>', self.on_result_select)
-        self.results_listbox.bind('<Double-1>', self.on_result_double_click)
-        
-        # 绑定搜索框事件
-        self.search_entry.bind('<Return>', lambda event: self.perform_search())
-        # 绑定点击事件，自动选中所有内容
-        self.search_entry.bind('<Button-1>', self.on_search_entry_click)
-        # 绑定Ctrl+A和Ctrl+a全选功能
-        self.search_entry.bind('<Control-a>', self.on_select_all)
-        self.search_entry.bind('<Control-A>', self.on_select_all)
-        
-        # 结果操作按钮框架（保留但为空，避免布局问题）
-        buttons_frame = ttk.Frame(results_frame)
-        buttons_frame.pack(fill=tk.X, pady=(10, 0))
-    
-    def perform_search(self):
-        """执行搜索"""
-        # 获取搜索关键词
-        query = self.search_var.get().strip()
-        if not query:
-            return
-        
-        # 获取搜索选项
-        case_sensitive = self.case_sensitive.get()
-        use_regex = self.use_regex.get()
-        
-        # 获取搜索范围
-        search_fields = []
-        if self.search_in_keyword.get():
-            search_fields.append('keyword')
-        if self.search_in_definition.get():
-            search_fields.append('definition')
-        if self.search_in_source.get():
-            search_fields.append('source')
-        if self.search_in_quote.get():
-            search_fields.append('quote')
-        if self.search_in_notes.get():
-            search_fields.append('notes')
-        
-        # 如果没有选择搜索范围，默认搜索所有字段
-        if not search_fields:
-            search_fields = ['keyword', 'definition', 'source', 'quote', 'notes']
-        
-        # 获取所有卡片
-        all_cards = self.card_manager.get_all_cards()
-        
-        # 执行搜索
-        self.search_results = []
-        
-        try:
-            for card in all_cards:
-                # 检查每个字段
-                for field in search_fields:
-                    field_value = card.get(field, '')
-                    if not field_value:
-                        continue
-                    
-                    # 转换为字符串
-                    field_value = str(field_value)
-                    
-                    # 根据搜索选项执行搜索
-                    if use_regex:
-                        # 使用正则表达式搜索
-                        flags = 0 if case_sensitive else re.IGNORECASE
-                        if re.search(query, field_value, flags):
-                            self.search_results.append(card)
-                            break
-                    else:
-                        # 使用普通文本搜索
-                        if case_sensitive:
-                            if query in field_value:
-                                self.search_results.append(card)
-                                break
-                        else:
-                            if query.lower() in field_value.lower():
-                                self.search_results.append(card)
-                                break
-            
-            # 更新结果列表
-            self.update_results_list()
-            
-            # 更新结果标题
-            self.results_title_var.set(f"搜索结果: 找到 {len(self.search_results)} 项")
-        
-        except Exception as e:
-            # 处理正则表达式错误
-            if use_regex:
-                tk.messagebox.showerror("错误", f"正则表达式错误: {str(e)}")
-            else:
-                tk.messagebox.showerror("错误", f"搜索错误: {str(e)}")
-    
-    def update_results_list(self):
-        """更新结果列表"""
-        # 清空列表
-        self.results_listbox.delete(0, tk.END)
-        
-        # 添加搜索结果
-        for card in self.search_results:
-            # 格式化显示内容
-            display_text = f"{card['keyword']} - {card['definition']}"
-            self.results_listbox.insert(tk.END, display_text)
-    
-    def on_result_select(self, event):
-        """结果选中事件处理"""
-        # 获取选中的索引
-        selection = self.results_listbox.curselection()
-        if not selection:
-            return
-        
-        # 获取选中的卡片
-        index = selection[0]
-        if index < len(self.search_results):
-            card = self.search_results[index]
-            # 这里可以显示卡片预览
-            pass
-    
-    def on_result_double_click(self, event):
-        """结果双击事件处理 - 显示卡片详情"""
-        # 获取选中的索引
-        selection = self.results_listbox.curselection()
-        if not selection:
-            return
-        
-        # 获取选中的卡片
-        index = selection[0]
-        if index < len(self.search_results):
-            card = self.search_results[index]
-            # 显示卡片详情
-            self.view_card_detail(card)
-    
-    def view_selected_result(self):
-        """查看选中的结果 - 显示卡片详情"""
-        # 获取选中的索引
-        selection = self.results_listbox.curselection()
-        if not selection:
-            return
-        
-        # 获取选中的卡片
-        index = selection[0]
-        if index < len(self.search_results):
-            card = self.search_results[index]
-            # 显示卡片详情
-            self.view_card_detail(card)
-    
-    def edit_selected_result(self):
-        """编辑选中的结果"""
-        # 获取选中的索引
-        selection = self.results_listbox.curselection()
-        if not selection:
-            return
-        
-        # 获取选中的卡片
-        index = selection[0]
-        if index < len(self.search_results):
-            card = self.search_results[index]
-            # 编辑卡片
-            self.main_window.show_add_card()
-            self.main_window.card_editor.load_card(card['id'])
-    
-    def view_card_detail(self, card):
-        """查看卡片详情"""
-        # 创建详情对话框
-        detail_window = tk.Toplevel(self.parent)
-        detail_window.title(f"卡片详情: {card['keyword']}")
-        detail_window.geometry("600x400")
-        detail_window.transient(self.parent)
-        detail_window.grab_set()
-        
-        # 设置主题颜色
-        detail_window.configure(bg=self.colors['bg'])
-        
-        # 创建详情框架
-        detail_frame = ttk.Frame(detail_window, padding=20)
-        detail_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 关键词
-        ttk.Label(
-            detail_frame,
-            text="关键词:",
-            font=("SimHei", 12, "bold"),
-            background=self.colors['bg']
-        ).grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
-        
-        ttk.Label(
-            detail_frame,
-            text=card['keyword'],
-            font=("SimHei", 16),
-            background=self.colors['bg']
-        ).grid(row=0, column=1, sticky=tk.W, pady=(0, 5))
-        
-        # 释义
-        ttk.Label(
-            detail_frame,
-            text="释义:",
-            font=("SimHei", 12, "bold"),
-            background=self.colors['bg']
-        ).grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
-        
-        ttk.Label(
-            detail_frame,
-            text=card['definition'],
-            font=("SimHei", 16),
-            background=self.colors['bg']
-        ).grid(row=1, column=1, sticky=tk.W, pady=(0, 5))
-        
-        # 出处
-        ttk.Label(
-            detail_frame,
-            text="出处:",
-            font=("SimHei", 12, "bold"),
-            background=self.colors['bg']
-        ).grid(row=2, column=0, sticky=tk.W, pady=(0, 5))
-        
-        ttk.Label(
-            detail_frame,
-            text=card['source'],
-            font=("SimHei", 16),
-            background=self.colors['bg']
-        ).grid(row=2, column=1, sticky=tk.W, pady=(0, 5))
-        
-        # 原文引用
-        ttk.Label(
-            detail_frame,
-            text="原文引用:",
-            font=("SimHei", 12, "bold"),
-            background=self.colors['bg']
-        ).grid(row=3, column=0, sticky=tk.NW, pady=(0, 5))
-        
-        ttk.Label(
-            detail_frame,
-            text=card['quote'],
-            font=("SimHei", 16),
-            background=self.colors['bg'],
-            wraplength=400
-        ).grid(row=3, column=1, sticky=tk.W, pady=(0, 5))
-        
-        # 注释
-        ttk.Label(
-            detail_frame,
-            text="注释:",
-            font=("SimHei", 12, "bold"),
-            background=self.colors['bg']
-        ).grid(row=4, column=0, sticky=tk.NW, pady=(0, 5))
-        
-        notes_text = tk.Text(
-            detail_frame,
-            width=50,
-            height=6,
-            font=("SimHei", 16),
-            wrap=tk.WORD
-        )
-        notes_text.grid(row=4, column=1, sticky=tk.NSEW, pady=(0, 5))
-        notes_text.insert(tk.END, card.get('notes', ''))
-        notes_text.config(state=tk.DISABLED)
-        
-        # 添加滚动条
-        notes_scrollbar = ttk.Scrollbar(
-            detail_frame,
-            command=notes_text.yview
-        )
-        notes_scrollbar.grid(row=4, column=2, sticky=tk.NS)
-        notes_text.config(yscrollcommand=notes_scrollbar.set)
-        
-        # 设置列权重
-        detail_frame.columnconfigure(1, weight=1)
-        detail_frame.rowconfigure(4, weight=1)
-        
-        # 按钮框架
-        button_frame = ttk.Frame(detail_window)
-        button_frame.pack(fill=tk.X, pady=(20, 0), padx=20)
-        
-        # 编辑按钮
-        edit_button = ttk.Button(
-            button_frame,
-            text="编辑",
-            command=lambda: self.edit_card(card['id'], detail_window)
-        )
-        edit_button.pack(side=tk.RIGHT, padx=(0, 10))
-        
-        # 关闭按钮
-        close_button = ttk.Button(
-            button_frame,
-            text="关闭",
-            command=detail_window.destroy
-        )
-        close_button.pack(side=tk.RIGHT)
-    
-    def edit_card(self, card_id, window):
-        """编辑卡片"""
-        # 关闭详情窗口
-        window.destroy()
-        
-        # 切换到编辑视图
-        self.main_window.show_add_card()
-        self.main_window.card_editor.load_card(card_id)
-    
-    def on_search_entry_click(self, event):
-        """搜索框点击事件 - 自动选中所有内容"""
-        # 使用after确保在默认的点击处理完成后再选中
-        self.search_entry.after(10, lambda: self.search_entry.select_range(0, tk.END))
-    
-    def on_select_all(self, event):
-        """全选功能 - 支持Ctrl+A和Ctrl+a"""
-        self.search_entry.select_range(0, tk.END)
-        # 阻止事件继续传播
-        return "break"
-    
-    def clear_search(self):
-        """清除搜索"""
-        # 清空搜索框
-        self.search_var.set("")
-        
-        # 清空结果列表
-        self.results_listbox.delete(0, tk.END)
-        
-        # 重置结果标题
-        self.results_title_var.set("搜索结果")
-        
-        # 清空搜索结果
-        self.search_results = []
-    
+        y_scrollbar.config(command=self.result_tree.yview)
+
+        # 设置列标题
+        self.result_tree.heading("keyword", text="关键词", anchor=tk.W)
+        self.result_tree.heading("definition", text="释义", anchor=tk.W)
+        self.result_tree.heading("source", text="出处", anchor=tk.W)
+        self.result_tree.heading("quote", text="原文", anchor=tk.W)
+
+        # 设置列宽
+        self.result_tree.column("keyword", width=150)
+        self.result_tree.column("definition", width=250)
+        self.result_tree.column("source", width=150)
+        self.result_tree.column("quote", width=300)
+
+        # 设置行高（从主窗口样式继承）
+        style = ttk.Style()
+        style.configure("SearchTreeview.Treeview", rowheight=30)
+        self.result_tree.configure(style="SearchTreeview.Treeview")
+
+        self.result_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 绑定事件
+        self.result_tree.bind("<Double-1>", self.on_item_double_click)
+        self.result_tree.bind("<Button-3>", self.show_context_menu)
+
+        # 右键菜单
+        self.context_menu = tk.Menu(self.parent, tearoff=0)
+        self.context_menu.add_command(label="编辑  \tCtrl+O", command=self.edit_selected_card)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="删除  \tDel", command=self.delete_selected_card)
+
+        # 同步主窗口的全局快捷键（可选）
+        self.bind_shortcuts()
+
+    def bind_shortcuts(self):
+        """绑定一些全局快捷键（当搜索面板可见时有效）"""
+        # 注意：这些绑定是针对整个 root 的，可能会与主窗口重复，但无大碍
+        root = self.main_window.root
+        root.bind("<Control-o>", lambda e: self.edit_selected_card())
+        root.bind("<Control-O>", lambda e: self.edit_selected_card())
+        root.bind("<Delete>", lambda e: self.delete_selected_card())
+
     def focus_search_entry(self):
-        """聚焦搜索输入框"""
+        """让搜索框获取焦点（主窗口调用）"""
         self.search_entry.focus_set()
+
+    def do_search(self):
+        """执行搜索并刷新结果列表"""
+        keyword = self.search_entry.get().strip()
+        if not keyword:
+            self.result_label.config(text="请输入关键词后搜索")
+            self.clear_results()
+            return
+
+        # 搜索所有卡片
+        all_cards = self.card_manager.get_all_cards()
+        matched_cards = [
+            card for card in all_cards
+            if (keyword in card.get("keyword", "")
+                or keyword in card.get("definition", "")
+                or keyword in card.get("source", "")
+                or keyword in card.get("quote", ""))
+        ]
+
+        self.current_results = matched_cards
+        self.result_label.config(text=f"找到 {len(matched_cards)} 条匹配结果")
+
+        # 刷新结果列表
+        self.refresh_result_list()
+
+    def refresh_result_list(self):
+        """刷新搜索结果列表显示"""
+        # 清空现有列表
+        for item in self.result_tree.get_children():
+            self.result_tree.delete(item)
+
+        # 插入搜索结果
+        for card in self.current_results:
+            values = (
+                card['keyword'],
+                card['definition'][:50] + "..." if len(card['definition']) > 50 else card['definition'],
+                card['source'],
+                card['quote'][:50] + "..." if len(card['quote']) > 50 else card['quote']
+            )
+            self.result_tree.insert("", tk.END, values=values, tags=(card['id'],))
+
+    def clear_results(self):
+        """清空搜索结果"""
+        self.current_results = []
+        self.refresh_result_list()
+
+    def on_item_double_click(self, event):
+        """双击打开编辑窗口"""
+        selected = self.result_tree.selection()
+        if selected:
+            item = selected[0]
+            card_id = self.result_tree.item(item, "tags")[0]
+            self.main_window.show_edit_card(card_id)
+
+    def show_context_menu(self, event):
+        """显示右键菜单"""
+        # 获取点击位置的行
+        item = self.result_tree.identify_row(event.y)
+        if not item:
+            return
+
+        # 如果当前行不在选中列表中，先选中它（单选）
+        if item not in self.result_tree.selection():
+            self.result_tree.selection_set(item)
+
+        selected_count = len(self.result_tree.selection())
+        # 编辑菜单仅在单选时启用
+        self.context_menu.entryconfig("编辑  \tCtrl+O", state="normal" if selected_count == 1 else "disabled")
+        self.context_menu.post(event.x_root + 10, event.y_root + 10)
+
+    def edit_selected_card(self):
+        """编辑选中的卡片"""
+        selected = self.result_tree.selection()
+        if len(selected) == 1:
+            item = selected[0]
+            card_id = self.result_tree.item(item, "tags")[0]
+            self.main_window.show_add_card()
+            self.main_window.card_editor.load_card(card_id)
+
+    def delete_selected_card(self):
+        """删除选中的卡片（支持批量）"""
+        selected = self.result_tree.selection()
+        if not selected:
+            return
+
+        # 获取选中的卡片ID和关键词
+        card_ids = []
+        for item in selected:
+            card_id = self.result_tree.item(item, "tags")[0]
+            card_ids.append(card_id)
+
+        if len(card_ids) == 1:
+            card = self.card_manager.get_card(card_ids[0])
+            if not card:
+                return
+            if not messagebox.askyesno("确认删除", f"确定要删除卡片 '{card['keyword']}' 吗？"):
+                return
+        else:
+            if not messagebox.askyesno("确认删除", f"确定要删除选中的 {len(card_ids)} 张卡片吗？"):
+                return
+
+        # 执行删除
+        deleted = 0
+        for cid in card_ids:
+            if self.card_manager.delete_card(cid):
+                deleted += 1
+
+        # 刷新搜索结果（从最新数据中重新搜索）
+        self.do_search()
+
+        # 可选：刷新主窗口的概览列表（保持数据同步）
+        if hasattr(self.main_window, 'refresh_list_view'):
+            self.main_window.refresh_list_view()
+
+        # 显示状态栏消息（如果有）
+        if hasattr(self.main_window, 'status_var'):
+            self.main_window.status_var.set(f"已删除 {deleted} 张卡片")

@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 卡片视图类，负责卡片的展示和交互
 """
-
 import tkinter as tk
-from tkinter import ttk, font
+from tkinter import ttk, font, messagebox
 from typing import Dict, Any, List
 
 class CardView:
@@ -40,11 +38,17 @@ class CardView:
         # 记录最近一次鼠标按键（用于判断选中事件来源）
         self.last_mouse_button = 1  # 默认是左键
         
-        # 新增：标记是否正在处理右键菜单（阻止选中事件）
+        # 标记是否正在处理右键菜单（阻止选中事件）
         self.is_right_clicking = False
         
         # 记录最近的多选状态（用于右键时恢复）
         self.last_multi_selection = []
+        
+        # 排序相关状态
+        self.is_time_sort = False
+        self.is_pinyin_sort = False
+        self.sort_column = None
+        self.sort_order = 'asc'
         
         # 创建视图
         self.create_view()
@@ -195,13 +199,13 @@ class CardView:
             xscrollcommand=xscrollbar.set,
             columns=('keyword', 'definition', 'source', 'quote'),
             show='headings',
-            selectmode="extended"  # 新增：开启真正的多选模式
+            selectmode="extended"  # 开启真正的多选模式
         )
         
         # 从设置管理器加载排序设置
         sort_column, sort_order, is_time_sort = self.settings_manager.get_sort_settings()
-        self.sort_column = sort_column
-        self.sort_order = sort_order
+        self.sort_column = sort_column or 'keyword'
+        self.sort_order = sort_order or 'asc'
         self.is_time_sort = is_time_sort
         
         # 定义排序函数
@@ -307,51 +311,49 @@ class CardView:
         ).pack(fill=tk.X, padx=10, pady=5)
     
     def refresh(self):
-        """刷新卡片视图"""
-        # 获取卡片列表
+        """刷新卡片视图（已修复：不再过滤缺失字段的卡片）"""
+        # 获取所有卡片
         cards = self.card_manager.get_all_cards()
         
-        # 根据排序方式排序
+        # 根据排序方式排序（注意：不过滤卡片，缺失字段使用空字符串）
         if self.view_var.get() == "list":
-            if hasattr(self, 'is_time_sort') and self.is_time_sort:
-                # 使用时间排序
+            if self.is_time_sort:
+                # 时间排序（安全，无需过滤）
                 sort_text = self.sort_menu_var.get()
-                reverse = "新→旧" in sort_text  # 新→旧为降序
-                self.current_cards = sorted(cards, key=lambda x: x['created_at'], reverse=reverse)
-            elif hasattr(self, 'is_pinyin_sort') and self.is_pinyin_sort:
-                # 使用拼音排序
+                reverse = "新→旧" in sort_text
+                self.current_cards = sorted(cards, key=lambda x: x.get('created_at', ''), reverse=reverse)
+            elif self.is_pinyin_sort:
+                # 拼音排序：缺失 keyword 的卡片使用空字符串作为排序键
                 sort_text = self.sort_menu_var.get()
-                reverse = "Z→A" in sort_text  # Z→A为降序
-                # 导入拼音排序模块
+                reverse = "Z→A" in sort_text
                 try:
                     import pypinyin
                     self.current_cards = sorted(
-                        [card for card in cards if card.get('keyword')],
-                        key=lambda x: pypinyin.lazy_pinyin(x['keyword'])[0].lower(),
+                        cards,
+                        key=lambda x: (pypinyin.lazy_pinyin(x.get('keyword', '') or '')[0].lower() 
+                                       if x.get('keyword') else ''),
                         reverse=reverse
                     )
                 except ImportError:
-                    # 如果没有pypinyin模块，使用默认排序
                     self.current_cards = sorted(
-                        [card for card in cards if card.get('keyword')],
-                        key=lambda x: x['keyword'],
+                        cards,
+                        key=lambda x: (x.get('keyword', '') or '').lower(),
                         reverse=reverse
                     )
-            elif hasattr(self, 'sort_column') and self.sort_column:
-                # 使用Treeview的列排序
+            elif self.sort_column:
+                # 列排序：缺失该列的卡片使用空字符串
                 reverse = (self.sort_order == 'desc')
-                # 确保排序键存在且不为None
                 self.current_cards = sorted(
-                    [card for card in cards if self.sort_column in card and card[self.sort_column] is not None],
-                    key=lambda x: x[self.sort_column], 
+                    cards,
+                    key=lambda x: x.get(self.sort_column, '') or '',
                     reverse=reverse
                 )
             else:
-                # 默认按关键词排序
-                self.current_cards = self.card_manager.sort_cards()
+                # 默认按关键词排序，缺失则用空字符串
+                self.current_cards = sorted(cards, key=lambda x: x.get('keyword', '') or '')
         else:
-            # 卡片视图默认按创建时间降序排序
-            self.current_cards = sorted(cards, key=lambda x: x['created_at'], reverse=True)
+            # 卡片视图默认按创建时间降序排序（安全）
+            self.current_cards = sorted(cards, key=lambda x: x.get('created_at', ''), reverse=True)
         
         # 更新视图
         if self.view_var.get() == "list":
@@ -372,10 +374,7 @@ class CardView:
         if self.view_var.get() == "list":
             self.list_view_frame.pack(fill=tk.BOTH, expand=True)
             self.update_list_view()
-            # 确保列标题正确显示
-            if hasattr(self, 'update_column_headings'):
-                self.update_column_headings()
-            # 移除窗口大小改变事件绑定
+            self.update_column_headings()
             try:
                 self.parent.unbind('<Configure>', self.resize_callback)
             except:
@@ -383,7 +382,6 @@ class CardView:
         else:
             self.card_view_frame.pack(fill=tk.BOTH, expand=True)
             self.update_card_view()
-            # 绑定窗口大小改变事件
             self.resize_callback = self.parent.bind('<Configure>', self.on_window_resize)
     
     def update_list_view(self):
@@ -394,20 +392,18 @@ class CardView:
         
         # 添加卡片数据到Treeview
         for card in self.current_cards:
-            # 确保所有字段都存在
             keyword = card.get('keyword', '') or ''
             definition = card.get('definition', '') or ''
             source = card.get('source', '') or ''
             quote = card.get('quote', '') or ''
             
-            # 直接显示文本，不添加额外的符号
             self.card_treeview.insert('', tk.END, 
                                      values=(keyword, definition, source, quote),
                                      tags=(card['id'],))
         
         # 更新列标题显示
-        if hasattr(self, 'update_column_headings'):
-            self.update_column_headings()
+        self.update_column_headings()
+    
     def update_card_view(self):
         """更新卡片视图（支持自适应列数）"""
         # 清空卡片容器
@@ -416,7 +412,7 @@ class CardView:
         
         # 根据窗口宽度自动调整列数
         window_width = self.card_display_frame.winfo_width()
-        card_width = 270  # 卡片宽度 + 边距
+        card_width = 270
         columns = max(2, min(4, window_width // card_width))
         
         for i, card in enumerate(self.current_cards):
@@ -438,7 +434,6 @@ class CardView:
     
     def create_card_widget(self, card, row, col):
         """创建单个卡片组件"""
-        # 创建卡片框架
         card_frame = ttk.Frame(
             self.card_container,
             width=250,
@@ -446,169 +441,49 @@ class CardView:
             relief=tk.RAISED,
             padding=10
         )
-        
-        # 设置卡片样式
         card_frame.configure(style="Card.TFrame")
         
-        # 关键词
         keyword_label = ttk.Label(
             card_frame,
-            text=card['keyword'],
+            text=card.get('keyword', '') or '',
             font=("SimHei", 16, "bold"),
             foreground=self.colors['accent']
         )
         keyword_label.pack(pady=(0, 10))
         
-        # 释义
         definition_label = ttk.Label(
             card_frame,
-            text=card['definition'],
+            text=card.get('definition', '') or '',
             font=("SimHei", 12),
             wraplength=220
         )
         definition_label.pack(pady=(0, 10))
         
-        # 出处
         source_label = ttk.Label(
             card_frame,
-            text=card['source'],
+            text=card.get('source', '') or '',
             font=("SimHei", 10, "italic"),
             foreground=self.colors['text']
         )
         source_label.pack(anchor=tk.W)
         
-        # 原文
         quote_label = ttk.Label(
             card_frame,
-            text=card['quote'],
+            text=card.get('quote', '') or '',
             font=("SimHei", 10),
             wraplength=220
         )
         quote_label.pack(anchor=tk.W, pady=(5, 0))
         
-        # 绑定事件
         card_frame.bind("<Button-1>", lambda event, c=card: self.on_card_click(c))
         card_frame.bind("<Enter>", lambda event: self.on_card_enter(event))
         card_frame.bind("<Leave>", lambda event: self.on_card_leave(event))
         
         return card_frame
     
-    def on_treeview_select(self, event):
-        """Treeview选中事件处理（同时过滤主窗口和CardView的右键）"""
-        # 关键：如果正在处理右键菜单，直接恢复之前的多选，不更新选中状态
-        if self.is_right_clicking:
-            # 恢复多选状态（同时同步主窗口）
-            if self.last_multi_selection:
-                self.card_treeview.selection_clear()
-                self.card_treeview.selection_add(self.last_multi_selection)
-                # 同步到主窗口
-                if hasattr(self.main_window, 'card_tree'):
-                    self.main_window.card_tree.selection_clear()
-                    self.main_window.card_tree.selection_add(self.last_multi_selection)
-            return
-        
-        # 只有左键触发的选中才处理（原有逻辑不变）
-        if self.last_mouse_button != 1:
-            return
-        
-        # 记录当前多选状态（供右键时恢复用）
-        self.last_multi_selection = self.card_treeview.selection()
-        
-        # 同步多选状态到主窗口
-        if hasattr(self.main_window, 'card_tree'):
-            self.main_window.card_tree.selection_clear()
-            self.main_window.card_tree.selection_add(self.last_multi_selection)
-        
-        # 原有选中更新逻辑
-        selection = self.card_treeview.selection()
-        if selection:
-            item_id = selection[0]
-            # 获取选中项的标签（卡片ID）
-            tags = self.card_treeview.item(item_id, 'tags')
-            if tags:
-                self.selected_card_id = tags[0]
-    
-    def on_treeview_click(self, event):
-        """Treeview点击事件处理（右键直接返回，不碰任何选中逻辑）"""
-        # 记录鼠标按键（1=左键，3=右键）
-        self.last_mouse_button = event.num
-        
-        # 右键点击：直接返回，不执行任何选中相关代码
-        if event.num != 1:
-            # 彻底取消当前可能的选中变化
-            event.widget.selection_anchor("")
-            return "break"  # 阻止事件传给其他绑定
-        
-        # 以下是原有左键处理逻辑（不变）
-        region = self.card_treeview.identify_region(event.x, event.y)
-        if region == "cell":
-            item = self.card_treeview.identify_row(event.y)
-            if item:
-                # 检查是否按下了Ctrl或Shift键
-                if not (event.state & 0x0004) and not (event.state & 0x0001):  # 0x0004是Ctrl键，0x0001是Shift键
-                    # 普通点击，清除之前的选择
-                    self.card_treeview.selection_set(item)
-                    self.card_treeview.focus(item)
-    
-    def on_treeview_ctrl_click(self, event):
-        """Treeview Ctrl+点击事件处理"""
-        # Ctrl+点击，切换选中状态
-        region = self.card_treeview.identify_region(event.x, event.y)
-        if region == "cell":
-            item = self.card_treeview.identify_row(event.y)
-            if item:
-                if item in self.card_treeview.selection():
-                    self.card_treeview.selection_remove(item)
-                else:
-                    self.card_treeview.selection_add(item)
-                self.card_treeview.focus(item)
-                # 阻止默认的选择行为
-                return "break"
-    
-    def on_treeview_shift_click(self, event):
-        """Treeview Shift+点击事件处理"""
-        # Shift+点击，选择连续的项
-        region = self.card_treeview.identify_region(event.x, event.y)
-        if region == "cell":
-            item = self.card_treeview.identify_row(event.y)
-            if item and self.card_treeview.selection():
-                # 获取当前焦点项和点击的项
-                focus_item = self.card_treeview.focus()
-                if focus_item:
-                    # 获取所有项
-                    all_items = self.card_treeview.get_children()
-                    # 找到焦点项和点击项的索引
-                    focus_idx = all_items.index(focus_item)
-                    try:
-                        click_idx = all_items.index(item)
-                        # 选择从焦点项到点击项的所有项
-                        start_idx = min(focus_idx, click_idx)
-                        end_idx = max(focus_idx, click_idx)
-                        self.card_treeview.selection_set(all_items[start_idx:end_idx+1])
-                    except ValueError:
-                        pass
-                # 阻止默认的选择行为
-                return "break"
-    
-    def on_treeview_double_click(self, event):
-        """Treeview双击事件处理"""
-        selection = self.card_treeview.selection()
-        if selection:
-            item_id = selection[0]
-            # 获取选中项的标签（卡片ID）
-            tags = self.card_treeview.item(item_id, 'tags')
-            if tags:
-                card_id = tags[0]
-                # 查找对应的卡片
-                for card in self.current_cards:
-                    if card['id'] == card_id:
-                        self.show_card_detail(card)
-                        break
-    
     def on_card_click(self, card):
         """卡片点击事件处理"""
         self.selected_card_id = card['id']
-        # 高亮显示选中的卡片
         self.highlight_selected_card()
     
     def on_card_enter(self, event):
@@ -619,18 +494,102 @@ class CardView:
         """鼠标离开卡片事件处理"""
         event.widget.configure(style="Card.TFrame")
     
+    def on_treeview_select(self, event):
+        """Treeview选中事件处理（同时同步主窗口和CardView的右键）"""
+        if self.is_right_clicking:
+            if self.last_multi_selection:
+                self.card_treeview.selection_clear()
+                self.card_treeview.selection_add(self.last_multi_selection)
+                if hasattr(self.main_window, 'card_tree'):
+                    self.main_window.card_tree.selection_clear()
+                    self.main_window.card_tree.selection_add(self.last_multi_selection)
+            return
+        
+        if self.last_mouse_button != 1:
+            return
+        
+        self.last_multi_selection = self.card_treeview.selection()
+        
+        if hasattr(self.main_window, 'card_tree'):
+            self.main_window.card_tree.selection_clear()
+            self.main_window.card_tree.selection_add(self.last_multi_selection)
+        
+        selection = self.card_treeview.selection()
+        if selection:
+            item_id = selection[0]
+            tags = self.card_treeview.item(item_id, 'tags')
+            if tags:
+                self.selected_card_id = tags[0]
+    
+    def on_treeview_click(self, event):
+        """Treeview点击事件处理（右键直接返回，不做任何选中处理）"""
+        self.last_mouse_button = event.num
+        
+        if event.num != 1:
+            event.widget.selection_anchor("")
+            return "break"
+        
+        region = self.card_treeview.identify_region(event.x, event.y)
+        if region == "cell":
+            item = self.card_treeview.identify_row(event.y)
+            if item:
+                if not (event.state & 0x0004) and not (event.state & 0x0001):
+                    self.card_treeview.selection_set(item)
+                    self.card_treeview.focus(item)
+    
+    def on_treeview_ctrl_click(self, event):
+        """Treeview Ctrl+点击事件处理"""
+        region = self.card_treeview.identify_region(event.x, event.y)
+        if region == "cell":
+            item = self.card_treeview.identify_row(event.y)
+            if item:
+                if item in self.card_treeview.selection():
+                    self.card_treeview.selection_remove(item)
+                else:
+                    self.card_treeview.selection_add(item)
+                self.card_treeview.focus(item)
+                return "break"
+    
+    def on_treeview_shift_click(self, event):
+        """Treeview Shift+点击事件处理"""
+        region = self.card_treeview.identify_region(event.x, event.y)
+        if region == "cell":
+            item = self.card_treeview.identify_row(event.y)
+            if item and self.card_treeview.selection():
+                focus_item = self.card_treeview.focus()
+                if focus_item:
+                    all_items = self.card_treeview.get_children()
+                    focus_idx = all_items.index(focus_item)
+                    try:
+                        click_idx = all_items.index(item)
+                        start_idx = min(focus_idx, click_idx)
+                        end_idx = max(focus_idx, click_idx)
+                        self.card_treeview.selection_set(all_items[start_idx:end_idx+1])
+                    except ValueError:
+                        pass
+                return "break"
+    
+    def on_treeview_double_click(self, event):
+        """Treeview双击事件处理"""
+        selection = self.card_treeview.selection()
+        if selection:
+            item_id = selection[0]
+            tags = self.card_treeview.item(item_id, 'tags')
+            if tags:
+                card_id = tags[0]
+                for card in self.current_cards:
+                    if card['id'] == card_id:
+                        self.show_card_detail(card)
+                        break
+    
     def on_card_container_configure(self, event):
         """卡片容器配置变化事件处理"""
         self.card_canvas.configure(scrollregion=self.card_canvas.bbox("all"))
     
     def highlight_selected_card(self):
         """高亮显示选中的卡片"""
-        # 在Treeview中高亮
         if self.selected_card_id:
-            # 清除所有选中
             self.card_treeview.selection_remove(self.card_treeview.selection())
-            
-            # 查找并选中对应的项
             for item in self.card_treeview.get_children():
                 tags = self.card_treeview.item(item, 'tags')
                 if tags and tags[0] == self.selected_card_id:
@@ -649,17 +608,10 @@ class CardView:
     def create_context_menu(self):
         """创建右键菜单"""
         self.context_menu = tk.Menu(self.parent, tearoff=0)
-        
-        # 编辑菜单项（仅在单选时可用）
         self.context_menu.add_command(label="编辑", command=self.edit_selected_card)
-        
-        # 删除菜单项
         self.context_menu.add_command(label="删除", command=self.delete_selected_card)
-        
-        # 分隔线
         self.context_menu.add_separator()
         
-        # 排序菜单项
         sort_menu = tk.Menu(self.context_menu, tearoff=0)
         sort_menu.add_command(label="按关键词排序（A→Z）", command=lambda: self.sort_by_column('keyword', 'asc'))
         sort_menu.add_command(label="按关键词排序（Z→A）", command=lambda: self.sort_by_column('keyword', 'desc'))
@@ -671,48 +623,31 @@ class CardView:
         self.context_menu.add_cascade(label="排序", menu=sort_menu)
     
     def show_context_menu(self, event):
-        """显示右键菜单（同步主窗口状态，彻底保留多选）"""
-        # 1. 标记为"正在处理右键"，让<<TreeviewSelect>>事件跳过处理
+        """显示右键菜单（同步主窗口状态，底部保证多选）"""
         self.is_right_clicking = True
-        
-        # 记录右键按键（3=右键）
         self.last_mouse_button = event.num
         
-        # 关键：同步主窗口的选中状态（避免主窗口逻辑覆盖）
         if hasattr(self.main_window, 'card_tree'):
             self.last_multi_selection = self.main_window.card_tree.selection()
         else:
             self.last_multi_selection = self.card_treeview.selection()
         
-        # 2. 关键：阻止Treeview右键点击时的"自动选中"默认行为
-        # （直接取消事件的默认动作，比"事后恢复"更彻底）
-        event.widget.focus_set()  # 让Treeview失去单元格焦点，避免选中
-        event.widget.selection_anchor("")  # 清空选中锚点，阻止选中变化
+        event.widget.focus_set()
+        event.widget.selection_anchor("")
         
-        # 3. 检查点击位置是否有效（只在单元格上弹菜单）
         region = self.card_treeview.identify_region(event.x, event.y)
         if region == "cell":
-            # 4. 直接使用同步后的多选状态
             selected_items = self.last_multi_selection
-            
-            # 5. 设置菜单可用性（编辑只在单选时可用）
             self.context_menu.entryconfig("编辑", state="normal" if len(selected_items) == 1 else "disabled")
-            
-            # 6. 弹出菜单（用post位置微调，避免遮挡）
             self.context_menu.post(event.x_root + 10, event.y_root + 10)
         
-        # 7. 菜单消失后重置标记（防止影响后续左键操作）
         def reset_right_click_flag(event=None):
             self.is_right_clicking = False
-            # 恢复多选状态到主窗口
             if hasattr(self.main_window, 'card_tree') and self.last_multi_selection:
                 self.main_window.card_tree.selection_clear()
                 self.main_window.card_tree.selection_add(self.last_multi_selection)
         
-        # 绑定菜单消失事件（点击菜单/空白处都触发）
         self.context_menu.bind("<Unmap>", reset_right_click_flag)
-        
-        # 8. 彻底阻止事件传播，不让Treeview后续触发选中
         return "break"
     
     def sort_by_column(self, column, order='asc'):
@@ -741,37 +676,28 @@ class CardView:
     
     def edit_card(self, card_id):
         """编辑指定的卡片"""
-        # 切换到编辑视图
         self.main_window.show_add_card()
-        # 加载卡片数据
         self.main_window.card_editor.load_card(card_id)
     
     def delete_selected_card(self):
         """删除选中的卡片"""
-        # 获取所有选中的卡片ID
         selected_items = self.card_treeview.selection()
         if not selected_items:
             return
         
-        # 根据选中数量显示不同的确认消息
         if len(selected_items) == 1:
             if tk.messagebox.askyesno("确认删除", "确定要删除选中的卡片吗？"):
-                # 删除单个卡片
                 tags = self.card_treeview.item(selected_items[0], 'tags')
                 if tags:
                     card_id = tags[0]
                     if self.card_manager.delete_card(card_id):
-                        # 刷新视图
                         self.refresh()
-                        # 清除选中状态
                         self.selected_card_id = None
-                        # 更新状态栏（不显示弹窗）
                         self.status_var.set("已删除1张卡片")
                     else:
                         tk.messagebox.showerror("错误", "删除卡片失败")
         else:
             if tk.messagebox.askyesno("确认删除", f"确定要删除选中的{len(selected_items)}张卡片吗？"):
-                # 批量删除卡片
                 deleted_count = 0
                 for item in selected_items:
                     tags = self.card_treeview.item(item, 'tags')
@@ -779,20 +705,14 @@ class CardView:
                         card_id = tags[0]
                         if self.card_manager.delete_card(card_id):
                             deleted_count += 1
-                
-                # 刷新视图
                 self.refresh()
-                # 清除选中状态
                 self.selected_card_id = None
-                # 更新状态栏（不显示弹窗）
                 self.status_var.set(f"已删除{deleted_count}张卡片")
     
     def update_treeview_font(self):
         """更新Treeview字体设置"""
         if hasattr(self, 'current_font_size') and hasattr(self, 'current_font_family'):
-            # 计算合适的行高，基于字体大小
             rowheight = max(30, self.current_font_size + 10)
-            
             self.style.configure("Treeview", 
                                rowheight=rowheight,
                                font=(self.current_font_family, self.current_font_size))
@@ -800,32 +720,24 @@ class CardView:
                                font=(self.current_font_family, self.current_font_size, "bold"))
     
     def on_font_change(self, *args):
-        """字体设置变更处理"""
+        """字体设置改变处理"""
         try:
-            # 获取新的字体设置
             self.current_font_size = int(self.font_size_var.get())
             self.current_font_family = self.font_family_var.get()
-            
-            # 更新Treeview字体
             self.update_treeview_font()
-            
-            # 刷新视图以应用新字体
             if self.view_var.get() == "list":
                 self.update_list_view()
             else:
                 self.update_card_view()
-            
-            # 更新状态栏
-            self.status_var.set(f"字体已更改为: {self.current_font_family} {self.current_font_size}px")
+            self.status_var.set(f"字体已更新为: {self.current_font_family} {self.current_font_size}px")
         except Exception as e:
             self.status_var.set(f"字体设置错误: {str(e)}")
     
     def update_column_headings(self):
         """更新列标题显示，添加排序标记"""
-        if not hasattr(self, 'sort_column'):
+        if not self.sort_column:
             return
         
-        # 列标题映射
         columns = {
             'keyword': '关键词',
             'definition': '释义',
@@ -833,18 +745,15 @@ class CardView:
             'quote': '原文引用'
         }
         
-        # 更新所有列标题
         for col, title in columns.items():
             if self.sort_column == col:
-                # 添加排序标记
                 mark = ' ↑' if self.sort_order == 'asc' else ' ↓'
                 self.card_treeview.heading(col, text=title + mark)
             else:
-                # 移除排序标记
                 self.card_treeview.heading(col, text=title)
     
     def on_sort_menu_change(self, value):
-        """排序菜单变更处理"""
+        """排序菜单改变处理"""
         if "创建时间" in value:
             self.is_time_sort = True
             self.is_pinyin_sort = False
@@ -856,26 +765,20 @@ class CardView:
             self.sort_column = None
             self.refresh()
         else:
-            # 切换到列排序模式
             self.is_time_sort = False
             self.is_pinyin_sort = False
-            # 使用当前排序的列
-            if hasattr(self, 'sort_column') and self.sort_column:
+            if self.sort_column:
                 self.refresh()
             else:
-                # 如果没有排序的列，默认按关键词排序
-                if hasattr(self, 'sort_by_column'):
-                    self.sort_by_column('keyword')
+                self.sort_by_column('keyword')
     
     def show_card_detail(self, card):
         """显示卡片详情窗口"""
-        # 创建详情窗口
         detail_window = tk.Toplevel(self.parent)
         detail_window.title(f"卡片详情 - {card['keyword']}")
-        detail_window.geometry("600x500")  # 增大窗口
+        detail_window.geometry("600x500")
         detail_window.resizable(True, True)
         
-        # 计算窗口位置，使其在屏幕中央
         detail_window.update_idletasks()
         width = detail_window.winfo_width()
         height = detail_window.winfo_height()
@@ -883,14 +786,11 @@ class CardView:
         y = (detail_window.winfo_screenheight() // 2) - (height // 2)
         detail_window.geometry(f"+{x}+{y}")
         
-        # 设置窗口图标和样式
         detail_window.configure(bg=self.colors['bg'])
         
-        # 创建详情框架
         detail_frame = ttk.Frame(detail_window, padding=20)
         detail_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 关键词
         ttk.Label(
             detail_frame,
             text="关键词（原文）:",
@@ -907,10 +807,9 @@ class CardView:
             fg=self.colors['accent']
         )
         keyword_text.grid(row=0, column=1, sticky=tk.NSEW, pady=(0, 10))
-        keyword_text.insert(tk.END, card['keyword'])
+        keyword_text.insert(tk.END, card.get('keyword', '') or '')
         keyword_text.config(state=tk.DISABLED)
         
-        # 释义
         ttk.Label(
             detail_frame,
             text="释义（卡片正面）:",
@@ -926,10 +825,9 @@ class CardView:
             bg=self.colors['card_bg']
         )
         definition_text.grid(row=1, column=1, sticky=tk.NSEW, pady=(0, 10))
-        definition_text.insert(tk.END, card['definition'])
+        definition_text.insert(tk.END, card.get('definition', '') or '')
         definition_text.config(state=tk.DISABLED)
         
-        # 出处
         ttk.Label(
             detail_frame,
             text="出处:",
@@ -945,10 +843,9 @@ class CardView:
             bg=self.colors['card_bg']
         )
         source_text.grid(row=2, column=1, sticky=tk.NSEW, pady=(0, 10))
-        source_text.insert(tk.END, card['source'])
+        source_text.insert(tk.END, card.get('source', '') or '')
         source_text.config(state=tk.DISABLED)
         
-        # 原文引用
         ttk.Label(
             detail_frame,
             text="原文引用:",
@@ -964,10 +861,9 @@ class CardView:
             bg=self.colors['card_bg']
         )
         quote_text.grid(row=3, column=1, sticky=tk.NSEW, pady=(0, 10))
-        quote_text.insert(tk.END, card['quote'])
+        quote_text.insert(tk.END, card.get('quote', '') or '')
         quote_text.config(state=tk.DISABLED)
         
-        # 注释
         ttk.Label(
             detail_frame,
             text="注释:",
@@ -984,16 +880,14 @@ class CardView:
         )
         notes_text.grid(row=4, column=1, sticky=tk.NSEW, pady=(0, 10))
         
-        # 如果有注释内容则插入，否则显示提示
-        if card.get('notes'):
-            notes_text.insert(tk.END, card['notes'])
+        notes_content = card.get('notes', '') or ''
+        if notes_content:
+            notes_text.insert(tk.END, notes_content)
         else:
             notes_text.insert(tk.END, "暂无注释")
             notes_text.config(foreground="#999999")
-        
         notes_text.config(state=tk.DISABLED)
         
-        # 添加滚动条
         notes_scrollbar = ttk.Scrollbar(
             detail_frame,
             command=notes_text.yview
@@ -1001,13 +895,11 @@ class CardView:
         notes_scrollbar.grid(row=4, column=2, sticky=tk.NS, pady=(0, 10))
         notes_text.config(yscrollcommand=notes_scrollbar.set)
         
-        # 设置列权重和行权重
         detail_frame.columnconfigure(1, weight=1)
-        detail_frame.rowconfigure(1, weight=1)  # 释义
-        detail_frame.rowconfigure(3, weight=1)  # 原文引用
-        detail_frame.rowconfigure(4, weight=1)  # 注释
+        detail_frame.rowconfigure(1, weight=1)
+        detail_frame.rowconfigure(3, weight=1)
+        detail_frame.rowconfigure(4, weight=1)
         
-        # 显示窗口
         detail_window.transient(self.parent)
         detail_window.grab_set()
         self.parent.wait_window(detail_window)

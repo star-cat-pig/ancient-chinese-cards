@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 卡片编辑器类，负责卡片的创建和编辑
 """
-
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Dict, Any, Optional
@@ -36,8 +34,6 @@ class CardEditor:
         
         # 创建编辑器界面
         self.create_editor()
-        
-
     
     def create_editor(self):
         """创建编辑器界面"""
@@ -346,26 +342,13 @@ class CardEditor:
     def _save_last_source(self, source):
         """保存上次使用的出处到设置管理器"""
         try:
-            # 首先尝试从主窗口获取设置管理器
             if hasattr(self.main_window, 'app') and hasattr(self.main_window.app, 'settings_manager'):
+                # 只设置值，不立即保存
                 self.main_window.app.settings_manager.set_setting("editor", "last_source", source)
-                self.main_window.app.settings_manager.save_preferences()
-                return True
-            
-            # 如果主窗口没有app属性，尝试直接从主窗口获取设置
-            elif hasattr(self.main_window, 'settings_manager'):
-                self.main_window.settings_manager.set_setting("editor", "last_source", source)
-                self.main_window.settings_manager.save_preferences()
-                return True
-            
-            # 如果都不行，尝试从卡片管理器获取
-            elif hasattr(self.card_manager, 'settings_manager'):
-                self.card_manager.settings_manager.set_setting("editor", "last_source", source)
-                self.card_manager.settings_manager.save_preferences()
+                # 不在每次编辑时保存，让程序退出时统一保存
                 return True
         except Exception as e:
             print(f"保存上次出处错误: {str(e)}")
-        
         return False
     
     def on_ctrl_a(self, event):
@@ -407,10 +390,6 @@ class CardEditor:
         """文本框内容变化事件处理"""
         # 文本框变化时不需要特殊处理
         pass
-    
-
-    
-
     
     def load_card(self, card_id: str):
         """
@@ -609,7 +588,6 @@ class CardEditor:
             messagebox.showerror("错误", f"保存卡片失败: {str(e)}")
     
     def cancel_edit(self):
-
         """取消编辑"""
         # 询问是否放弃更改
         if self.has_form_changes():
