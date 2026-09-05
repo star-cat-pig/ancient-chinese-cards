@@ -202,10 +202,24 @@ class MainWindow:
         self.nav_frame.pack(side=tk.LEFT, fill=tk.Y, padx=0, pady=0)
         self.nav_frame.pack_propagate(False)
         self.nav_frame.config(padx=0, pady=0)
-    
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.icons_dir = os.path.join(base_dir, "file", "navigation", "icons")
-    
+
+        # 资源目录解析（修复打包后图标丢失）：
+        # 打包成 onedir 后 ui/main_window.py 位于 <根>/_internal/ui/ 下，
+        # 若用 __file__ 往上两级会指到 _internal/ 而找不到 exe 旁边的 file/。
+        # 改为：开发时用源码根；打包(frozen)后用 exe 所在目录；再做多重候选兜底。
+        dev_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 开发 = 源码根
+        try:
+            from config import get_main_exe_dir
+            exe_root = get_main_exe_dir()   # frozen: exe 所在目录；开发: 源码根
+        except Exception:
+            exe_root = dev_root
+        icon_candidates = [
+            os.path.join(exe_root, "file", "navigation", "icons"),      # 正确布局：onedir 根 / 安装根 {app}\file
+            os.path.join(exe_root, "assets", "navigation", "icons"),    # 兼容 2.0 iss 曾把 file 装进 {app}\assets 的历史安装
+            os.path.join(dev_root, "file", "navigation", "icons"),      # 直接跑源码的兜底
+        ]
+        self.icons_dir = next((p for p in icon_candidates if os.path.isdir(p)), icon_candidates[0])
+
         nav_configs = [
             {
                 "icon_file": "cards.png",
@@ -1154,7 +1168,8 @@ class MainWindow:
     
     def show_update_log(self):
         try:
-            update_file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "update.txt")
+            from config import get_main_exe_dir
+            update_file_path = os.path.join(get_main_exe_dir(), "assets", "update.txt")
             with open(update_file_path, 'r', encoding='utf-8') as f:
                 update_content = f.read()
             update_window = tk.Toplevel(self.root)

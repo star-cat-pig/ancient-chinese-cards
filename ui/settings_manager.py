@@ -46,8 +46,8 @@ class SettingsManager:
 
     def _get_fallback_dir(self):
         """默认回退目录"""
-        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(current_dir, 'data')
+        from config import get_main_exe_dir
+        return os.path.join(get_main_exe_dir(), 'data')
 
     def load_preferences(self):
         """加载用户偏好"""
@@ -202,7 +202,8 @@ class SettingsManager:
         settings_window.transient(self.app.root)
         settings_window.grab_set()
 
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "icon.ico")
+        from config import get_main_exe_dir
+        icon_path = os.path.join(get_main_exe_dir(), "assets", "icon.ico")
         if os.path.exists(icon_path):
             try:
                 settings_window.iconbitmap(icon_path)
@@ -397,7 +398,8 @@ class SettingsManager:
         win.transient(self.app.root)
         win.grab_set()
 
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "icon.ico")
+        from config import get_main_exe_dir
+        icon_path = os.path.join(get_main_exe_dir(), "assets", "icon.ico")
         if os.path.exists(icon_path):
             try:
                 win.iconbitmap(icon_path)

@@ -13,9 +13,15 @@ from typing import Optional
 APP_NAME = "古文卡片学习软件"
 MAIN_EXE_NAME = "cards.exe"          # 统一主程序exe名称
 UPDATE_EXE_NAME = "update.exe"       # 统一更新程序exe名称
-CURRENT_VERSION = "2.0"               # 全局唯一版本号，更新只改这里
+CURRENT_VERSION = "2.0.1"               # 全局唯一版本号，更新只改这里
 GITHUB_OWNER = "star-cat-pig"         # 仓库所有者
 GITHUB_REPO = "ancient-chinese-cards" # 仓库名称
+
+# 打包架构标签：决定更新程序去 GitHub 上认领哪个架构的安装包
+#   "arm" -> 只下载资产名含 arm 的包（如 Setup_Cards_ARM_2.0.exe）
+#   "x64" -> 只下载资产名不含 arm 的包（如 Setup_Cards_2.0.exe），绝不误下 ARM 包
+# 打 ARM 版保持 "arm"；打 x86 版前务必改回 "x64"！
+PLATFORM_TAG = "x64"
 # ======================================================================
 
 # 路径相关常量（无需修改）
@@ -81,6 +87,7 @@ def generate_temp_update_config(save_path: Optional[str] = None) -> str:
         "github_owner": GITHUB_OWNER,
         "github_repo": GITHUB_REPO,
         "current_version": CURRENT_VERSION,
+        "platform_tag": PLATFORM_TAG,
         "app_name": APP_NAME,
         "main_exe_name": MAIN_EXE_NAME,
         "main_exe_dir": get_main_exe_dir(),
