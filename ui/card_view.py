@@ -876,7 +876,9 @@ class CardView:
             width=50,
             height=6,
             font=("SimHei", 12),
-            bg=self.colors['card_bg']
+            bg=self.colors['card_bg'],
+            fg=self.colors['text'],
+            insertbackground=self.colors['text']
         )
         notes_text.grid(row=4, column=1, sticky=tk.NSEW, pady=(0, 10))
         
@@ -885,7 +887,7 @@ class CardView:
             notes_text.insert(tk.END, notes_content)
         else:
             notes_text.insert(tk.END, "暂无注释")
-            notes_text.config(foreground="#999999")
+            notes_text.config(foreground=self.colors['sub_text'])
         notes_text.config(state=tk.DISABLED)
         
         notes_scrollbar = ttk.Scrollbar(

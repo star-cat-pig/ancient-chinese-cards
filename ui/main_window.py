@@ -15,6 +15,9 @@ from ui.card_view import CardView
 from ui.card_editor import CardEditor
 from ui.search_panel import SearchPanel
 from ui.source_category_view import SourceCategoryView
+from clips_store import ClipsStore
+from ui.clip_collector import ClipCollector
+from ui.inbox_view import InboxView
 
 # 图片加载兼容处理（支持jpg格式）
 try:
@@ -32,6 +35,35 @@ def get_font_family():
         if font in available:
             return font
     return "Arial"
+
+
+# 浅色主题配色（默认，米黄 + 朱砂红）
+LIGHT_COLORS = {
+    'bg': '#F5F2E9',         # 米黄色背景
+    'text': '#3A2E21',       # 深棕色文字
+    'sub_text': '#8A7A5F',   # 次要文字（提示/说明）
+    'accent': '#C44536',     # 朱砂红强调色
+    'card_bg': '#FFFFFF',    # 卡片背景色
+    'field_bg': '#FFFFFF',   # 输入框背景色
+    'border': '#D3C5A9',     # 边框颜色
+    'hover': '#E8E0D5',      # 悬停颜色
+    'heading_bg': '#EFEAE0', # 表头背景
+    'drop_hl': '#FCE4DB',    # 拖拽合并目标高亮
+}
+
+# 深色主题配色（暖黑 + 亮朱砂红，呼应浅色的暖棕风格）
+DARK_COLORS = {
+    'bg': '#1E1B17',         # 深暖黑背景
+    'text': '#E8DFCF',       # 浅米色文字
+    'sub_text': '#B0A58E',   # 次要文字（深色下更亮的米灰）
+    'accent': '#D4695A',     # 亮朱砂红强调色
+    'card_bg': '#2A2621',    # 深灰棕卡片背景
+    'field_bg': '#33302B',   # 深色输入框背景
+    'border': '#4A443B',     # 深灰边框
+    'hover': '#38332D',      # 深灰悬停
+    'heading_bg': '#2E2A25', # 深色表头背景
+    'drop_hl': '#4A2A25',    # 拖拽合并目标高亮（深红棕）
+}
 
 
 class MainWindow:
@@ -53,15 +85,15 @@ class MainWindow:
         # 获取设置管理器
         self.settings_manager = app.settings_manager if app else None
         
-        # 设置主题颜色
-        self.colors = {
-            'bg': '#F5F2E9',      # 米黄色背景
-            'text': '#3A2E21',    # 深棕色文字
-            'accent': '#C44536',  # 朱砂红强调色
-            'card_bg': '#FFFFFF', # 卡片背景色
-            'border': '#D3C5A9',  # 边框颜色
-            'hover': '#E8E0D5'    # 悬停颜色
-        }
+        # 设置主题颜色（按设置选深浅色）
+        theme = 'default'
+        if self.settings_manager:
+            try:
+                theme = self.settings_manager.get_theme() or 'default'
+            except Exception:
+                pass
+        self.is_dark_theme = (theme == 'dark')
+        self.colors = dict(DARK_COLORS if self.is_dark_theme else LIGHT_COLORS)
 
         if self.settings_manager:
             self.get_font = self.settings_manager.get_font
@@ -116,6 +148,23 @@ class MainWindow:
         
         # 绑定窗口关闭事件以保存设置
         self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
+
+        # ---- 划词收集 / 暂存箱（2.1 新增；Windows 全局热键 Ctrl+Alt+C）----
+        try:
+            from config import get_user_data_dir
+            _data_dir = self.settings_manager.user_data_dir if self.settings_manager else get_user_data_dir()
+            self.clips_store = ClipsStore(_data_dir)
+            self.clip_collector = ClipCollector(self.root, self.clips_store, self.settings_manager)
+            try:
+                self.clip_collector.set_theme(self.is_dark_theme)
+            except Exception:
+                pass
+            self.inbox_view = None
+            self.root._on_clip_saved = self._on_clip_saved
+            if os.name == "nt":
+                self.clip_collector.start()
+        except Exception as e:
+            print(f"划词收集初始化失败（不影响主程序）: {e}")
     
         if self.settings_manager:
             self.settings_manager.apply_settings()
@@ -127,39 +176,165 @@ class MainWindow:
         
         # 设置样式
         self.style = ttk.Style()
-        self.style.configure("TLabel", font=self.get_font(11))
-        self.style.configure("TButton", font=self.get_font(10))
-        self.style.configure("Treeview", font=self.get_font(11), rowheight=32)
-        self.style.configure("Treeview.Heading", font=self.get_font(14, bold=True))
-        
-        # 创建自定义样式
-        self.style.configure("Accent.TButton",
-                            background=self.colors['accent'],
-                            foreground="#000000",  # 改为黑色字体
-                            bordercolor=self.colors['accent'])
-        self.style.map("Accent.TButton",
-                      background=[("active", self.colors['accent']),
-                                ("!active", self.colors['accent'])],
-                      foreground=[("active", "#000000"),  # 改为黑色字体
-                                ("!active", "#000000")])  # 改为黑色字体
-        
-        # 确保选中状态的文本颜色为黑色
-        self.style.map("TEntry",
-                      foreground=[("focus", "#000000"),
-                                ("!focus", "#000000")])
-        self.style.map("TCombobox",
-                      foreground=[("focus", "#000000"),
-                                ("!focus", "#000000")])
-        
-        self.style.configure("Card.TFrame",
-                            background=self.colors['card_bg'],
-                            borderwidth=1,
-                            relief="raised")
-        self.style.configure("CardHover.TFrame",
-                            background=self.colors['hover'],
-                            borderwidth=1,
-                            relief="raised")
+        self._configure_style()
+
+    def _configure_style(self):
+        """配置 ttk 样式（深浅色主题统一入口）"""
+        c = self.colors
+        style = self.style
+        style.configure("TLabel", font=self.get_font(11))
+        style.configure("TButton", font=self.get_font(10))
+        style.configure("Treeview", font=self.get_font(11), rowheight=32)
+        style.configure("Treeview.Heading", font=self.get_font(14, bold=True))
+
+        if self.is_dark_theme:
+            # 深色：切 clam theme 才能自定义 Treeview/组件背景色
+            try:
+                style.theme_use('clam')
+            except Exception:
+                pass
+            style.configure('.', background=c['bg'], foreground=c['text'])
+            style.configure('TFrame', background=c['bg'])
+            style.configure('TLabel', background=c['bg'], foreground=c['text'])
+            style.configure('TLabelframe', background=c['bg'], foreground=c['text'])
+            style.configure('TLabelframe.Label', background=c['bg'], foreground=c['text'])
+            style.configure('TButton', background=c['field_bg'], foreground=c['text'])
+            style.map('TButton', background=[('active', c['hover'])])
+            style.configure('TCheckbutton', background=c['bg'], foreground=c['text'],
+                            indicatorbackground=c['field_bg'], indicatorforeground=c['text'])
+            style.map('TCheckbutton',
+                      background=[('active', c['bg']), ('!active', c['bg'])],
+                      indicatorbackground=[('selected', c['accent']), ('!selected', c['field_bg'])],
+                      indicatorforeground=[('selected', '#FFFFFF'), ('!selected', c['text'])])
+            # 上面的 indicator 配色在 clam 的 C 绘制路径上不一定生效（部分环境仍画 ×），
+            # 因此再叠加一层保险：换成自绘图片勾选框（空框 / 朱砂底白勾），绕开主题引擎
+            self._install_dark_check_indicator()
+            style.configure('TRadiobutton', background=c['bg'], foreground=c['text'],
+                            indicatorbackground=c['field_bg'], indicatorforeground=c['text'])
+            style.map('TRadiobutton', background=[('active', c['bg']), ('!active', c['bg'])],
+                      indicatorbackground=[('selected', c['accent']), ('!selected', c['field_bg'])])
+            style.configure('TEntry', fieldbackground=c['field_bg'], foreground=c['text'], insertcolor=c['text'])
+            style.configure('TCombobox', fieldbackground=c['field_bg'], foreground=c['text'], background=c['field_bg'])
+            style.configure('Treeview', background=c['card_bg'], fieldbackground=c['card_bg'], foreground=c['text'])
+            style.configure('Treeview.Heading', background=c['heading_bg'], foreground=c['text'])
+            style.map('Treeview', background=[('selected', c['accent'])], foreground=[('selected', '#FFFFFF')])
+            style.configure('TNotebook', background=c['bg'])
+            style.configure('TNotebook.Tab', background=c['field_bg'], foreground=c['text'])
+            style.map('TNotebook.Tab', background=[('selected', c['bg'])])
+            style.configure('TScrollbar', background=c['field_bg'], troughcolor=c['bg'])
+            # 强调按钮（红底白字）
+            style.configure('Accent.TButton', background=c['accent'], foreground='#FFFFFF', bordercolor=c['accent'])
+            style.map('Accent.TButton',
+                      background=[('active', c['accent']), ('!active', c['accent'])],
+                      foreground=[('active', '#FFFFFF'), ('!active', '#FFFFFF')])
+        else:
+            # 浅色：用系统 vista theme（保持现状外观）
+            try:
+                style.theme_use('vista')
+            except Exception:
+                style.theme_use('default')
+            style.configure('Accent.TButton',
+                            background=c['accent'],
+                            foreground="#000000",
+                            bordercolor=c['accent'])
+            style.map('Accent.TButton',
+                      background=[("active", c['accent']),
+                                  ("!active", c['accent'])],
+                      foreground=[("active", "#000000"),
+                                  ("!active", "#000000")])
+            # 确保选中状态的文本颜色为黑色
+            style.map("TEntry", foreground=[("focus", "#000000"), ("!focus", "#000000")])
+            style.map("TCombobox", foreground=[("focus", "#000000"), ("!focus", "#000000")])
+
+        # 卡片样式（两套主题共用）
+        style.configure("Card.TFrame",
+                        background=c['card_bg'],
+                        borderwidth=1,
+                        relief="raised")
+        style.configure("CardHover.TFrame",
+                        background=c['hover'],
+                        borderwidth=1,
+                        relief="raised")
+
+        # 根窗口背景（避免边角露出系统默认灰）
+        try:
+            self.root.config(bg=c['bg'])
+        except Exception:
+            pass
     
+    def _install_dark_check_indicator(self):
+        """深色主题：把 TCheckbutton 的勾选框换成自绘图片（绕开 clam 的 × 绘制坑）
+
+        - element 只创建一次并常驻（图片随 DARK 配色固定，主题往返无需重建）
+        - layout 每次进入深色都重新替换一次（theme_use 会重置 layout，替换幂等）
+        """
+        try:
+            style = self.style
+            if "AppCheck.indicator" not in style.element_names():
+                off_img, on_img = self._draw_check_photos()
+                self._check_imgs = (off_img, on_img)  # 持有引用，防止被 GC 后图片失效
+                style.element_create("AppCheck.indicator", "image", off_img,
+                                     ("selected", on_img))
+
+            def _swap_indicator(layout):
+                out = []
+                for name, opts in layout:
+                    if name == "Checkbutton.indicator":
+                        name = "AppCheck.indicator"
+                    if "children" in opts:
+                        opts = dict(opts)
+                        opts["children"] = _swap_indicator(opts["children"])
+                    out.append((name, opts))
+                return out
+
+            style.layout("TCheckbutton",
+                         _swap_indicator(style.layout("TCheckbutton")))
+        except Exception as e:
+            print(f"深色勾选框自绘失败（回退默认）: {e}")
+
+    def _draw_check_photos(self):
+        """程序化绘制 20x20 勾选框两枚：未选中空框 / 选中朱砂底白勾"""
+        size = 20
+        c = self.colors
+        border = c.get('sub_text', '#B0A58E')
+        fill = c.get('field_bg', '#33302B')
+        accent = c.get('accent', '#D4695A')
+        white = '#FFFFFF'
+
+        def blank_image(bg):
+            # 1px 边框 + 纯底
+            rows = []
+            for y in range(size):
+                row = []
+                for x in range(size):
+                    edge = x == 0 or y == 0 or x == size - 1 or y == size - 1
+                    row.append(border if edge else bg)
+                rows.append(row)
+            return rows
+
+        def to_photo(rows):
+            img = tk.PhotoImage(master=self.root, width=size, height=size)
+            data = "\n".join("{" + " ".join(r) + "}" for r in rows)
+            img.put(data)
+            return img
+
+        off_rows = blank_image(fill)
+        on_rows = blank_image(accent)
+
+        # 白勾（2px 粗）：先左下斜线再右上斜线
+        pts = []
+        for k in range(4):      # (4,10)->(7,13) 的左斜
+            pts.append((4 + k, 10 + k))
+            pts.append((5 + k, 10 + k))   # 横向加粗
+        for k in range(9):      # (8,14)->(16,6) 的右斜
+            pts.append((8 + k, 14 - k))
+            pts.append((9 + k, 14 - k))   # 横向加粗
+        for x, y in pts:
+            if 0 <= x < size and 0 <= y < size:
+                on_rows[y][x] = white
+
+        return to_photo(off_rows), to_photo(on_rows)
+
     def create_menu(self):
         """创建菜单栏"""
         self.menu_bar = tk.Menu(self.root)
@@ -245,6 +420,12 @@ class MainWindow:
                 "click_func": self.show_source_category,
                 "view_name": "source_category"
             },
+            {
+                "icon_file": "inbox.png",
+                "text": "暂存箱",
+                "click_func": self.show_inbox,
+                "view_name": "inbox"
+            },
         ]
     
         icon_size = (48, 48)
@@ -314,17 +495,17 @@ class MainWindow:
                 "frame": item_frame
             }
     
-        fill_frame = tk.Frame(self.nav_frame, bg=self.colors['bg'])
-        fill_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.fill_frame = tk.Frame(self.nav_frame, bg=self.colors['bg'])
+        self.fill_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
     
-        bottom_frame = tk.Frame(self.nav_frame, bg=self.colors['bg'])
-        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=0, ipady=0)
+        self.bottom_frame = tk.Frame(self.nav_frame, bg=self.colors['bg'])
+        self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=0, ipady=0)
     
-        expand_frame = tk.Frame(bottom_frame, bg=self.colors['bg'])
-        expand_frame.pack(side=tk.TOP, fill=tk.X, pady=0, ipady=5)
+        self.expand_frame = tk.Frame(self.bottom_frame, bg=self.colors['bg'])
+        self.expand_frame.pack(side=tk.TOP, fill=tk.X, pady=0, ipady=5)
     
         self.expand_img_label = tk.Label(
-            expand_frame,
+            self.expand_frame,
             bg=self.colors['bg'],
             cursor="hand2",
             borderwidth=0,
@@ -348,13 +529,13 @@ class MainWindow:
     
         self.expand_img_label.bind("<Button-1>", self.on_expand_click)
     
-        setting_frame = tk.Frame(bottom_frame, bg=self.colors['bg'])
-        setting_frame.pack(side=tk.TOP, fill=tk.X, pady=0, ipady=5)
-        setting_content = tk.Frame(setting_frame, bg=self.colors['bg'])
-        setting_content.pack(side=tk.LEFT, fill=tk.Y)
+        self.setting_frame = tk.Frame(self.bottom_frame, bg=self.colors['bg'])
+        self.setting_frame.pack(side=tk.TOP, fill=tk.X, pady=0, ipady=5)
+        self.setting_content = tk.Frame(self.setting_frame, bg=self.colors['bg'])
+        self.setting_content.pack(side=tk.LEFT, fill=tk.Y)
 
         self.setting_img_label = tk.Label(
-            setting_content,
+            self.setting_content,
             bg=self.colors['bg'],
             cursor="hand2",
             borderwidth=0,
@@ -366,7 +547,7 @@ class MainWindow:
         self.setting_img_label.pack(side=tk.LEFT, padx=(10, 5), pady=0, anchor='center')
 
         self.setting_text_label = tk.Label(
-            setting_content,
+            self.setting_content,
             text="设置",
             bg=self.colors['bg'],
             fg=self.colors['text'],
@@ -377,7 +558,7 @@ class MainWindow:
         self.setting_text_label.pack_forget()
 
         self.collapse_img_label = tk.Label(
-            setting_frame,
+            self.setting_frame,
             bg=self.colors['bg'],
             cursor="hand2",
             borderwidth=0,
@@ -412,7 +593,7 @@ class MainWindow:
                 self.nav_images["collapse"] = self.collapse_image
                 self.collapse_img_label.config(image=self.collapse_image)
                 self.collapse_img_label.update_idletasks()
-                setting_frame.update_idletasks()
+                self.setting_frame.update_idletasks()
             except Exception as e:
                 print(f"收缩图标加载失败：{str(e)}")
                 self.collapse_img_label.config(text="←", fg=self.colors['text'], font=self.get_font(11))
@@ -426,17 +607,17 @@ class MainWindow:
         self.collapse_img_label.bind("<Button-1>", self.on_collapse_click)
 
         def on_setting_frame_enter(event):
-            setting_content.config(bg=self.colors['hover'])
+            self.setting_content.config(bg=self.colors['hover'])
             self.setting_img_label.config(bg=self.colors['hover'])
             self.setting_text_label.config(bg=self.colors['hover'])
 
         def on_setting_frame_leave(event):
-            setting_content.config(bg=self.colors['bg'])
+            self.setting_content.config(bg=self.colors['bg'])
             self.setting_img_label.config(bg=self.colors['bg'])
             self.setting_text_label.config(bg=self.colors['bg'])
 
-        setting_content.bind("<Enter>", on_setting_frame_enter)
-        setting_content.bind("<Leave>", on_setting_frame_leave)
+        self.setting_content.bind("<Enter>", on_setting_frame_enter)
+        self.setting_content.bind("<Leave>", on_setting_frame_leave)
     
     def highlight_nav_button(self, nav_name):
         """仅重置导航项背景色，取消选中高亮"""
@@ -460,13 +641,81 @@ class MainWindow:
         self.views['edit_card'] = ttk.Frame(self.content_area)
         self.views['search'] = ttk.Frame(self.content_area)
         self.views['source_category'] = ttk.Frame(self.content_area)
+        self.views['inbox'] = ttk.Frame(self.content_area)
         
         self.create_list_view()
         
         self.card_editor = CardEditor(self.views['add_card'], self.card_manager, self)
         self.search_panel = SearchPanel(self.views['search'], self.card_manager, self)
         self.source_category_view = SourceCategoryView(self.views['source_category'], self.card_manager, self)
-    
+
+    # ---------------- 主题切换 ----------------
+    def apply_theme(self, theme_name):
+        """切换深浅色主题（即时生效）"""
+        is_dark = (theme_name == 'dark')
+        self.is_dark_theme = is_dark
+        self.colors.update(DARK_COLORS if is_dark else LIGHT_COLORS)
+        if self.settings_manager:
+            try:
+                self.settings_manager.save_theme(theme_name)
+            except Exception:
+                pass
+        # 重新配置 ttk 样式 + 刷新导航栏 + 重建内容区
+        self._configure_style()
+        self._refresh_nav_colors()
+        self._rebuild_content_views()
+        self._show_current_view()
+        # 划词浮窗同步主题色（下次弹出即用新配色）
+        cc = getattr(self, 'clip_collector', None)
+        if cc is not None:
+            try:
+                cc.set_theme(is_dark)
+            except Exception:
+                pass
+
+    def _refresh_nav_colors(self):
+        """按当前 colors 刷新左侧导航栏配色"""
+        c = self.colors
+        self.nav_frame.config(bg=c['bg'])
+        for items in self.nav_items.values():
+            items['frame'].config(bg=c['bg'])
+            items['img'].config(bg=c['bg'])
+            items['text'].config(bg=c['bg'], fg=c['text'])
+        self.fill_frame.config(bg=c['bg'])
+        self.bottom_frame.config(bg=c['bg'])
+        self.expand_frame.config(bg=c['bg'])
+        self.setting_frame.config(bg=c['bg'])
+        self.setting_content.config(bg=c['bg'])
+        self.expand_img_label.config(bg=c['bg'])
+        self.setting_img_label.config(bg=c['bg'])
+        self.setting_text_label.config(bg=c['bg'], fg=c['text'])
+        self.collapse_img_label.config(bg=c['bg'])
+
+    def _rebuild_content_views(self):
+        """销毁并重建内容区各视图（让已创建 widget 应用新配色）"""
+        for frame in self.views.values():
+            for child in frame.winfo_children():
+                child.destroy()
+        self.inbox_view = None
+        self.create_list_view()
+        self.card_editor = CardEditor(self.views['add_card'], self.card_manager, self)
+        self.search_panel = SearchPanel(self.views['search'], self.card_manager, self)
+        self.source_category_view = SourceCategoryView(self.views['source_category'], self.card_manager, self)
+
+    def _show_current_view(self):
+        """重新显示切换主题前所在的视图"""
+        cur = getattr(self, 'current_view', 'overview')
+        if cur == 'inbox':
+            self.show_inbox()
+        elif cur == 'add_card':
+            self.show_add_card()
+        elif cur == 'search':
+            self.show_search()
+        elif cur == 'source_category':
+            self.show_source_category()
+        else:
+            self.show_overview()
+
     def show_view(self, view_name):
         """显示指定的视图"""
         for view in self.views.values():
@@ -497,6 +746,22 @@ class MainWindow:
         self.show_view('add_card')
         self.card_editor.reset_form()
         self.card_editor.focus_first_field()
+
+    def show_inbox(self):
+        """显示暂存箱（划词收集箱）视图"""
+        if self.inbox_view is None:
+            self.inbox_view = InboxView(self.views['inbox'], self.clips_store,
+                                        self.card_manager, self)
+        self.show_view('inbox')
+        self.inbox_view.refresh()
+
+    def _on_clip_saved(self):
+        """划词收集有新条目后刷新暂存箱视图"""
+        if self.inbox_view is not None:
+            try:
+                self.inbox_view.refresh()
+            except Exception:
+                pass
     
     def show_edit_card(self, card_id):
         """显示编辑卡片视图"""

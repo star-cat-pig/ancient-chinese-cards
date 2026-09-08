@@ -107,7 +107,10 @@ class CardEditor:
             width=60,
             height=4,  # 减小高度
             font=("SimHei", 11),  # 减小字体
-            wrap=tk.WORD
+            wrap=tk.WORD,
+            bg=self.colors.get('field_bg', '#FFFFFF'),
+            fg=self.colors.get('text', '#000000'),
+            insertbackground=self.colors.get('text', '#000000')
         )
         self.notes_text.grid(row=5, column=0, columnspan=2, sticky=tk.NSEW, pady=(0, 15))
         
@@ -159,7 +162,7 @@ class CardEditor:
             bottom_frame,
             textvariable=self.status_var,
             font=("SimHei", 10),
-            foreground="#666666"
+            foreground=self.colors['sub_text']
         )
         status_label.pack(anchor=tk.W)
     
@@ -209,19 +212,19 @@ class CardEditor:
         
         # 设置默认占位符文本
         field_var.set(placeholder)
-        field_entry.config(foreground="#999999")
+        field_entry.config(foreground=self.colors['sub_text'])
     
     def on_entry_focus_in(self, event, var, placeholder):
         """输入框获得焦点事件处理"""
         if var.get() == placeholder:
             var.set("")
-            event.widget.config(foreground="#000000")
+            event.widget.config(foreground=self.colors['text'])
     
     def on_entry_focus_out(self, event, var, placeholder):
         """输入框失去焦点事件处理"""
         if not var.get():
             var.set(placeholder)
-            event.widget.config(foreground="#999999")
+            event.widget.config(foreground=self.colors['sub_text'])
     
     def on_entry_return(self, event, field_name):
         """处理输入框的回车键事件，实现导航功能"""
@@ -253,7 +256,7 @@ class CardEditor:
                             if current_value == placeholder or not current_value:
                                 # 填充上次的出处
                                 next_var.set(self.last_source)
-                                next_entry.config(foreground="#000000")
+                                next_entry.config(foreground=self.colors['text'])
                                 # 全选内容
                                 next_entry.select_range(0, tk.END)
                                 next_entry.icursor(tk.END)
@@ -263,7 +266,7 @@ class CardEditor:
                             placeholder = self.get_placeholder_for_field(next_field)
                             if next_var.get() == placeholder:
                                 next_var.set("")
-                                next_entry.config(foreground="#000000")
+                                next_entry.config(foreground=self.colors['text'])
                         
                         # 设置焦点
                         next_entry.focus_set()
@@ -277,7 +280,7 @@ class CardEditor:
                         placeholder = self.get_placeholder_for_field(next_field)
                         if next_var and next_var.get() == placeholder:
                             next_var.set("")
-                            next_entry.config(foreground="#000000")
+                            next_entry.config(foreground=self.colors['text'])
                         # 设置焦点
                         next_entry.focus_set()
                 else:
@@ -425,7 +428,7 @@ class CardEditor:
             field_entry = getattr(self, f"{field_name}_entry", None)
             if field_entry:
                 # 直接设置为正常颜色，因为这是从数据库加载的实际内容
-                field_entry.config(foreground="#000000")
+                field_entry.config(foreground=self.colors['text'])
     
     def reset_form(self):
         """重置表单"""
@@ -448,7 +451,7 @@ class CardEditor:
             field_var.set(placeholder)
             # 使用保存的输入框引用
             field_entry = getattr(self, f"{field_name}_entry")
-            field_entry.config(foreground="#999999")
+            field_entry.config(foreground=self.colors['sub_text'])
         
         self.notes_text.delete(1.0, tk.END)
     
@@ -476,7 +479,7 @@ class CardEditor:
                 placeholder = '请输入古文中的关键词或生僻字'
                 if keyword_var.get() == placeholder:
                     keyword_var.set("")
-                    keyword_entry.config(foreground="#000000")
+                    keyword_entry.config(foreground=self.colors['text'])
         except Exception as e:
             print(f"激活关键词字段时出错: {str(e)}")
     

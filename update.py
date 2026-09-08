@@ -213,6 +213,7 @@ class UpdateConfig:
     """更新程序配置类 - 全局唯一配置源来自config.py，打包自动内置"""
     
     def __init__(self):
+        self.platform_tag = "x64"  # 架构标签，默认 x64；config 中存在 PLATFORM_TAG 则覆盖
         try:
             from config import (
                 APP_NAME, MAIN_EXE_NAME, CURRENT_VERSION,
@@ -223,6 +224,11 @@ class UpdateConfig:
             self.current_version = CURRENT_VERSION
             self.app_name = APP_NAME
             self.main_exe_name = MAIN_EXE_NAME
+            try:
+                from config import PLATFORM_TAG
+                self.platform_tag = PLATFORM_TAG
+            except ImportError:
+                pass  # 老版 config 无架构标签，保持默认 x64
         except ImportError:
             self.github_owner = "star-cat-pig"
             self.github_repo = "ancient-chinese-cards"
@@ -258,7 +264,7 @@ class UpdateConfig:
             except Exception as e:
                 print(f"加载配置文件失败: {e}", file=sys.stderr)
         
-        for key in ['github_owner', 'github_repo', 'current_version', 'ignore_version']:
+        for key in ['github_owner', 'github_repo', 'current_version', 'ignore_version', 'platform_tag']:
             env_key = f"CARD_UPDATE_{key.upper()}"
             if env_key in os.environ:
                 setattr(self, key, os.environ[env_key])
@@ -383,29 +389,40 @@ class UpdateManager:
             self.latest_version = release_data.get("tag_name", "").lstrip("v")
             self.release_note = release_data.get("body", "本次更新优化了多项功能，提升稳定性和用户体验")
             assets = release_data.get("assets", [])
+
+            # ---- 架构感知选包（ARM 支持）----
+            # 按打包时内置的 platform_tag 认领对应架构的安装包：
+            #   "arm" -> 只认资产名含 "arm" 的 .exe（如 Setup_Cards_ARM_2.0.exe）
+            #   "x64" -> 只认资产名不含 "arm" 的 .exe（如 cards.exe / Setup_Cards_2.0.exe）
+            # 任何情况下都绝不下载另一架构的包。
+            platform_tag = (getattr(self.config, "platform_tag", "") or "").strip().lower() or "x64"
+            self.config.platform_tag = platform_tag  # 归一化，供后续逻辑/日志使用
             target_asset = None
-            
+
             for asset in assets:
                 asset_name = asset.get("name", "")
-                if asset_name == self.config.main_exe_name and asset_name.endswith(".exe"):
-                    target_asset = asset
-                    break
-            
-            if not target_asset and assets:
-                for asset in assets:
-                    if asset.get("name", "").endswith(".exe"):
+                if not asset_name.lower().endswith(".exe"):
+                    continue
+                if platform_tag == "arm":
+                    if "arm" in asset_name.lower():
                         target_asset = asset
                         break
-            
+                else:  # x64 / 其他：排除 ARM 资产
+                    if "arm" not in asset_name.lower():
+                        target_asset = asset
+                        break
+
             if target_asset:
                 self.download_url = target_asset.get("browser_download_url")
             else:
                 if not self.silent:
-                    print("未找到匹配的Windows更新包", file=sys.stderr)
+                    arch_desc = "ARM" if platform_tag == "arm" else "x64/通用"
+                    print(f"未找到匹配{arch_desc}架构的更新包（GitHub release 可能还未上传对应安装包）", file=sys.stderr)
                 return False
             
             if not self.silent:
-                print(f"获取到最新版本: v{self.latest_version}，下载地址: {self.download_url}", file=sys.stderr)
+                arch_desc = "ARM" if platform_tag == "arm" else "x64/通用"
+                print(f"获取到最新版本: v{self.latest_version}（{arch_desc}），下载地址: {self.download_url}", file=sys.stderr)
             
             return True
             

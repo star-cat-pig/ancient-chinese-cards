@@ -13,7 +13,7 @@ from typing import Optional
 APP_NAME = "古文卡片学习软件"
 MAIN_EXE_NAME = "cards.exe"          # 统一主程序exe名称
 UPDATE_EXE_NAME = "update.exe"       # 统一更新程序exe名称
-CURRENT_VERSION = "2.0.1"               # 全局唯一版本号，更新只改这里
+CURRENT_VERSION = "2.1"               # 全局唯一版本号，更新只改这里
 GITHUB_OWNER = "star-cat-pig"         # 仓库所有者
 GITHUB_REPO = "ancient-chinese-cards" # 仓库名称
 

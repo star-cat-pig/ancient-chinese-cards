@@ -26,7 +26,8 @@ class SettingsManager:
             'ui': {'theme': 'default', 'window_position': None, 'window_size': None},
             'last_used': {'export_format': 'txt', 'last_export_time': None},
             'update': {'auto_check_update': True, 'ignore_version': ''},
-            'font': {'family': 'Microsoft YaHei', 'size': 12}
+            'font': {'family': 'Microsoft YaHei', 'size': 12},
+            'clip': {'hotkey_enabled': True}
         }
         self.settings = copy.deepcopy(self.default_settings)
         self.load_preferences()
@@ -192,6 +193,64 @@ class SettingsManager:
     def get_theme(self):
         return self.settings['ui']['theme']
 
+    def _get_colors(self):
+        """获取当前主题配色（供设置窗口的文字颜色使用）"""
+        try:
+            return self.app.main_window.colors
+        except Exception:
+            return {'text': '#000000', 'sub_text': '#8A7A5F', 'bg': '#F5F2E9'}
+
+    def _make_scrollable(self, parent):
+        """创建可滚动容器（Canvas + 滚动条 + 鼠标滚轮），返回内容 frame 供填充"""
+        colors = self._get_colors()
+        canvas = tk.Canvas(parent, highlightthickness=0, bd=0,
+                           bg=colors.get('bg', '#F5F2E9'))
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        inner = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=inner, anchor='nw')
+
+        def _on_inner_configure(event):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+        inner.bind('<Configure>', _on_inner_configure)
+
+        def _sync_width(event):
+            canvas.itemconfigure(window_id, width=event.width)
+        canvas.bind('<Configure>', _sync_width)
+
+        # 鼠标滚轮滚动（绑到全局，窗口销毁时解绑，避免残留影响主窗口）
+        def _on_mousewheel(event):
+            if not canvas.winfo_exists():
+                return
+            try:
+                num = getattr(event, 'num', None)
+                if num == 4:
+                    canvas.yview_scroll(-1, 'units')
+                elif num == 5:
+                    canvas.yview_scroll(1, 'units')
+                else:
+                    canvas.yview_scroll(-1 * (event.delta // 120), 'units')
+            except Exception:
+                pass
+
+        canvas.bind_all('<MouseWheel>', _on_mousewheel)
+        canvas.bind_all('<Button-4>', _on_mousewheel)
+        canvas.bind_all('<Button-5>', _on_mousewheel)
+
+        def _cleanup(event):
+            try:
+                canvas.unbind_all('<MouseWheel>')
+                canvas.unbind_all('<Button-4>')
+                canvas.unbind_all('<Button-5>')
+            except Exception:
+                pass
+        canvas.bind('<Destroy>', _cleanup)
+
+        return inner
+
     # ---------------------- 设置窗口 ----------------------
     def show_settings_window(self):
         """显示设置窗口（含基本设置、外观布局、数据管理）"""
@@ -219,26 +278,27 @@ class SettingsManager:
         # 标签页控制器
         tab_control = ttk.Notebook(settings_window)
 
-        # 1. 基本设置标签页
+        # 1. 基本设置标签页（内容可滚动）
         basic_tab = ttk.Frame(tab_control)
         tab_control.add(basic_tab, text="基本设置")
-        self._create_basic_settings_page(basic_tab)
+        self._create_basic_settings_page(self._make_scrollable(basic_tab))
 
-        # 2. 外观布局标签页
+        # 2. 外观布局标签页（内容可滚动）
         appearance_tab = ttk.Frame(tab_control)
         tab_control.add(appearance_tab, text="外观布局")
-        self._create_appearance_layout_page(appearance_tab)
+        self._create_appearance_layout_page(self._make_scrollable(appearance_tab))
 
-        # 3. 数据管理标签页
+        # 3. 数据管理标签页（内容可滚动）
         data_tab = ttk.Frame(tab_control)
         tab_control.add(data_tab, text="数据管理")
-        self._create_data_page(data_tab).pack(fill=tk.BOTH, expand=True)
+        self._create_data_page(self._make_scrollable(data_tab)).pack(fill=tk.BOTH, expand=True)
 
-        tab_control.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-
-        # 底部按钮
+        # 底部按钮：先 pack 固定在底部，避免被内容挤掉
         bottom_frame = ttk.Frame(settings_window, padding="10")
         bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # 内容区后 pack，填充剩余空间
+        tab_control.pack(fill=tk.BOTH, expand=True, padx=20, pady=(20, 0))
 
         # 取消按钮
         ttk.Button(bottom_frame, text="取消", command=settings_window.destroy).pack(side=tk.RIGHT, padx=5)
@@ -252,9 +312,18 @@ class SettingsManager:
                 # 保存外观设置
                 self.set_setting("font", "family", self._font_family_var.get())
                 self.set_setting("font", "size", self._font_size_var.get())
+                # 主题：保存 + 若变化则即时切换
+                new_theme = self._theme_var.get()
+                old_theme = self.get_theme() or 'default'
+                self.set_setting("ui", "theme", new_theme)
                 # 应用并保存
                 self.apply_settings()
                 self.save_preferences()
+                if new_theme != old_theme:
+                    try:
+                        self.app.main_window.apply_theme(new_theme)
+                    except Exception as e:
+                        print(f"切换主题失败：{e}")
                 settings_window.destroy()
             except Exception as e:
                 messagebox.showerror("错误", f"保存设置失败：{str(e)}")
@@ -295,6 +364,36 @@ class SettingsManager:
             variable=self._auto_fill_source_var
         ).pack(anchor=tk.W, pady=5)
 
+        # 划词收集设置区（2.1 新增；Windows 全局热键 Ctrl+Alt+C）
+        clip_frame = ttk.LabelFrame(frame, text="划词收集（Windows）", padding="15")
+        clip_frame.pack(fill=tk.X, pady=10)
+        self._clip_hotkey_var = tk.BooleanVar(
+            value=self.get_setting("clip", "hotkey_enabled", True))
+
+        def _toggle_clip_hotkey():
+            self.set_setting("clip", "hotkey_enabled",
+                             bool(self._clip_hotkey_var.get()), auto_save=True)
+            try:
+                collector = self.app.main_window.clip_collector
+                if self._clip_hotkey_var.get():
+                    collector.start()
+                else:
+                    collector.stop()
+            except Exception:
+                pass
+
+        ttk.Checkbutton(
+            clip_frame,
+            text="启用全局热键 Ctrl+Alt+C 划词收集",
+            variable=self._clip_hotkey_var,
+            command=_toggle_clip_hotkey
+        ).pack(anchor=tk.W, pady=5)
+        ttk.Label(
+            clip_frame,
+            text="任意窗口划选文字后按 Ctrl+Alt+C，即可收进「暂存箱」（需软件在运行；非 Windows 自动忽略）。",
+            foreground=self._get_colors()['sub_text']
+        ).pack(anchor=tk.W)
+
         # 初始化默认设置（兼容旧版本）
         if "update" not in self.settings:
             self.settings["update"] = {"auto_check_update": True, "ignore_version": ""}
@@ -306,6 +405,13 @@ class SettingsManager:
         frame.pack(fill=tk.BOTH, expand=True)
         # 标题
         ttk.Label(frame, text="外观布局", font=("SimHei", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+        # 主题设置区域
+        theme_frame = ttk.LabelFrame(frame, text="主题设置", padding="15")
+        theme_frame.pack(fill=tk.X, pady=10)
+        self._theme_var = tk.StringVar(value=self.get_theme() or 'default')
+        ttk.Label(theme_frame, text="界面主题:").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Radiobutton(theme_frame, text="浅色（米黄）", variable=self._theme_var, value='default').pack(anchor=tk.W, pady=2)
+        ttk.Radiobutton(theme_frame, text="深色", variable=self._theme_var, value='dark').pack(anchor=tk.W, pady=2)
         # 字体设置区域
         font_frame = ttk.LabelFrame(frame, text="字体设置", padding="15")
         font_frame.pack(fill=tk.X, pady=10)
@@ -334,9 +440,16 @@ class SettingsManager:
         self.available_cn_fonts.append("────────")
         self.available_cn_fonts.append("更多字体")
         
-        # 初始化字体变量（默认微软雅黑，兼容原有设置）
-        default_cn_name = [k for k, v in self.CHINESE_FONT_MAP.items() if v == self.get_setting("font", "family", "Microsoft YaHei")]
-        init_font = default_cn_name[0] if default_cn_name else "微软雅黑"
+        # 初始化字体变量：预设表能反查 → 显示中文名；反查不到（之前用"更多字体"选的）
+        # → 把真实字体名加到下拉顶部并回显，不再退回"微软雅黑"（修复回显 bug）
+        saved_family = self.get_setting("font", "family", "Microsoft YaHei") or "Microsoft YaHei"
+        matched_cn = [k for k, v in self.CHINESE_FONT_MAP.items() if v == saved_family]
+        if matched_cn:
+            init_font = matched_cn[0]
+        else:
+            init_font = saved_family
+            if saved_family not in self.available_cn_fonts:
+                self.available_cn_fonts.insert(0, saved_family)
         self._font_family_var = tk.StringVar(value=init_font)
         self._font_size_var = tk.IntVar(value=self.get_setting("font", "size", 12))
         
@@ -386,9 +499,11 @@ class SettingsManager:
         if selected == "────────":
              return
 
-        real_font = self.CHINESE_FONT_MAP.get(selected, "Microsoft YaHei") 
-        self.set_setting("font", "family", real_font)
-        self.apply_settings()
+        # 仅预设表中的"中文名→真实名"才保存；映射外的是已保存的真实字体名（更多字体选的），
+        # 点它不应把字体改回微软雅黑
+        if selected in self.CHINESE_FONT_MAP:
+            self.set_setting("font", "family", self.CHINESE_FONT_MAP[selected])
+            self.apply_settings()
 
     def _show_font_dialog(self):
         win = tk.Toplevel(self.app.root)
@@ -425,6 +540,10 @@ class SettingsManager:
             selected_font = listbox.get(tk.ACTIVE)
     
             self.set_setting("font", "family", selected_font)
+            # 把自定义字体加进下拉选项并回显（否则下次重开又退回微软雅黑）
+            if selected_font not in self.available_cn_fonts:
+                self.available_cn_fonts.insert(0, selected_font)
+                self.font_combo.config(values=self.available_cn_fonts)
             self._font_family_var.set(selected_font)
     
             win.destroy()
@@ -496,7 +615,11 @@ class SettingsManager:
             # 立即应用字体+保存偏好
             self.apply_settings()
             self.save_preferences()
-            # 刷新主设置界面的预览
+            # 把自定义字体加进下拉选项并回显，刷新预览
+            if selected_font not in self.available_cn_fonts:
+                self.available_cn_fonts.insert(0, selected_font)
+                self.font_combo.config(values=self.available_cn_fonts)
+            self._font_family_var.set(selected_font)
             self._preview_label.config(font=self.get_font(size=self._font_size_var.get()))
             # 关闭更多字体窗口
             more_fonts_win.destroy()
@@ -532,7 +655,7 @@ class SettingsManager:
             ancc_info_frame,
             text="ANCC格式为软件专属加密格式，支持完整的卡片数据备份和恢复。",
             font=("SimHei", 10),
-            foreground="#000000",
+            foreground=self._get_colors()['text'],
             justify=tk.LEFT,
             wraplength=400
         ).pack(anchor=tk.W)
@@ -540,7 +663,7 @@ class SettingsManager:
             ancc_info_frame,
             text="注：ANCC格式仅本软件可解析，支持标点符号和空格。",
             font=("SimHei", 9),
-            foreground="#000000",
+            foreground=self._get_colors()['text'],
             justify=tk.LEFT,
             wraplength=400
         ).pack(anchor=tk.W, pady=(5, 0))
@@ -549,7 +672,7 @@ class SettingsManager:
         ttk.Label(
             frame,
             text="数据管理功能已就绪",
-            foreground="#000000"
+            foreground=self._get_colors()['text']
         ).pack(anchor=tk.W, padx=10, pady=10)
 
         return frame
